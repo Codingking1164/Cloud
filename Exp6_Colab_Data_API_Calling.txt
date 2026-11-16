@@ -1,0 +1,330 @@
+==========================================================
+EXPERIMENT 6: GOOGLE COLAB BASED DATA API CALLING
+==========================================================
+
+----------------------------------------------------------
+1. AIM
+----------------------------------------------------------
+To use Google Colab (a cloud notebook) to call web APIs using
+Python, get data in JSON format, convert it into a table
+(DataFrame), analyse it and plot it.
+
+----------------------------------------------------------
+2. THEORY (learn this)
+----------------------------------------------------------
+GOOGLE COLAB (Colaboratory)
+  Free cloud service from Google. It gives a Jupyter notebook in
+  the browser. Code runs on Google's cloud servers (a VM), not on
+  your laptop. Python and libraries (pandas, requests, matplotlib)
+  are already installed. Free GPU/TPU available.
+  It is an example of SaaS / PaaS cloud service.
+
+API (Application Programming Interface)
+  A way for one program to talk to another program/service.
+
+REST API
+  Uses HTTP methods on URLs (endpoints) and usually returns JSON.
+    GET    = read data
+    POST   = create data
+    PUT    = update data
+    DELETE = delete data
+
+JSON
+  JavaScript Object Notation. Light text format of key-value
+  pairs. Example:  {"id": 1, "title": "hello"}
+
+HTTP STATUS CODES
+  200 OK            201 Created
+  400 Bad Request   401 Unauthorized
+  404 Not Found     500 Server Error
+
+API KEY
+  Secret code that identifies you to the API. Never write it in
+  public code. In Colab keep it in "Secrets" (key icon on left).
+
+LIBRARIES USED
+  requests   = call APIs
+  pandas     = tables / data analysis
+  matplotlib = graphs
+
+ANALOGY
+  API = waiter in a restaurant. You (client) order, waiter takes
+  it to the kitchen (server) and brings back the food (data).
+
+----------------------------------------------------------
+3. DIAGRAM (draw this)
+----------------------------------------------------------
+
+   Colab notebook (Python)                    API server
+   +-------------------+   HTTP GET request   +-----------+
+   |  requests.get()   | -------------------> |  Database |
+   |                   | <------------------- |  / Service|
+   |  pandas / plot    |   JSON response      +-----------+
+   +-------------------+
+        runs on Google Cloud
+
+----------------------------------------------------------
+4. STEPWISE EXECUTION
+----------------------------------------------------------
+(Colab runs in the browser. You need internet and a Google
+account. Run each cell with Shift + Enter.)
+
+STEP 1: Open Colab
+    Go to  https://colab.research.google.com
+    Sign in with Google account.
+    Click  File -> New notebook.
+    Rename it: "API_Calling_Experiment".
+
+STEP 2: Connect runtime
+    Click "Connect" (top right). Wait for green tick / RAM-Disk.
+
+STEP 3: Check libraries (CELL 1)
+    import requests
+    import pandas as pd
+    import matplotlib.pyplot as plt
+    print("requests version:", requests.__version__)
+    print("pandas version:", pd.__version__)
+  (If a library is missing: !pip install requests pandas
+  The ! runs a shell command in Colab.)
+
+STEP 4: Simple GET request (CELL 2)
+    url = "https://jsonplaceholder.typicode.com/posts/1"
+    response = requests.get(url)
+    print("Status code:", response.status_code)
+    print(response.json())
+
+  EXPECTED:
+    Status code: 200
+    {'userId': 1, 'id': 1, 'title': '...', 'body': '...'}
+
+STEP 5: Get many records and convert to DataFrame (CELL 3)
+    url = "https://jsonplaceholder.typicode.com/posts"
+    data = requests.get(url).json()
+    df = pd.DataFrame(data)
+    print(df.shape)
+    df.head()
+
+  EXPECTED: table with columns userId, id, title, body.
+  Shape (100, 4).
+
+STEP 6: Analyse data (CELL 4)
+    print(df.info())
+    posts_per_user = df.groupby("userId")["id"].count()
+    print(posts_per_user)
+
+STEP 7: Plot a graph (CELL 5)
+    posts_per_user.plot(kind="bar", color="skyblue")
+    plt.title("Number of posts per user")
+    plt.xlabel("User ID")
+    plt.ylabel("Posts")
+    plt.show()
+
+  EXPECTED: bar chart with 10 users, 10 posts each.
+
+STEP 8: API with parameters - weather API (CELL 6)
+  Open-Meteo is free and needs NO API key.
+    url = "https://api.open-meteo.com/v1/forecast"
+    params = {
+        "latitude": 19.07,
+        "longitude": 72.87,
+        "hourly": "temperature_2m",
+        "forecast_days": 1
+    }
+    r = requests.get(url, params=params)
+    print("Status:", r.status_code)
+    weather = r.json()
+    weather_df = pd.DataFrame({
+        "time": weather["hourly"]["time"],
+        "temperature": weather["hourly"]["temperature_2m"]
+    })
+    weather_df.head()
+  (Change latitude/longitude to your own city if you like.)
+
+STEP 9: Plot the weather data (CELL 7)
+    weather_df.plot(x="time", y="temperature", figsize=(10,4),
+                    title="Hourly Temperature")
+    plt.xticks(rotation=45)
+    plt.show()
+
+STEP 10: POST request - send data to API (CELL 8)
+    url = "https://jsonplaceholder.typicode.com/posts"
+    new_post = {"title": "My Cloud Experiment",
+                "body": "Testing POST from Colab",
+                "userId": 1}
+    r = requests.post(url, json=new_post)
+    print("Status:", r.status_code)
+    print(r.json())
+  EXPECTED: Status 201 (Created) and the new object with id 101.
+  (JSONPlaceholder is a fake API, it does not really save the
+  data, but it shows how POST works.)
+
+STEP 11: Handle errors properly (CELL 9)
+    try:
+        r = requests.get("https://jsonplaceholder.typicode.com/posts/9999",
+                         timeout=10)
+        r.raise_for_status()
+        print(r.json())
+    except requests.exceptions.HTTPError as e:
+        print("HTTP error:", e)
+    except requests.exceptions.RequestException as e:
+        print("Request failed:", e)
+  EXPECTED: "HTTP error: 404 Client Error ..."
+
+STEP 12: Use an API that needs a key (OPTIONAL, for explanation)
+    1. Click the key icon (Secrets) on the left side of Colab.
+    2. Add a secret named  MY_API_KEY  with your key value.
+    3. Turn on "Notebook access".
+    4. In a cell:
+         from google.colab import userdata
+         api_key = userdata.get("MY_API_KEY")
+         headers = {"Authorization": f"Bearer {api_key}"}
+         r = requests.get("https://example.com/api/data",
+                          headers=headers)
+  (example.com is only a placeholder URL. Use the real API URL.)
+
+STEP 13: Save the data (CELL 10)
+    df.to_csv("posts.csv", index=False)
+    from google.colab import files
+    files.download("posts.csv")
+  Or save to Google Drive:
+    from google.colab import drive
+    drive.mount("/content/drive")
+    df.to_csv("/content/drive/MyDrive/posts.csv", index=False)
+
+STEP 14: Take screenshots / save the notebook
+    File -> Download -> Download .ipynb
+    (Colab also auto-saves to Google Drive.)
+
+----------------------------------------------------------
+5. SAME THING FROM UBUNTU TERMINAL (if the lab asks)
+----------------------------------------------------------
+    sudo apt update
+    sudo apt install -y curl python3-pip
+    curl -s https://jsonplaceholder.typicode.com/posts/1
+    curl -s "https://api.open-meteo.com/v1/forecast?latitude=19.07&longitude=72.87&current_weather=true"
+    curl -X POST https://jsonplaceholder.typicode.com/posts \
+         -H "Content-Type: application/json" \
+         -d '{"title":"test","body":"hello","userId":1}'
+  In Colab you can also run:  !curl -s URL
+
+----------------------------------------------------------
+6. COMMON ERRORS AND QUICK FIXES
+----------------------------------------------------------
+- ModuleNotFoundError: No module named 'xyz'
+    -> !pip install xyz
+- "Runtime disconnected" / variables lost
+    -> Colab resets after idle time. Click Connect, then
+       Runtime -> Run all.
+- requests.exceptions.ConnectionError
+    -> No internet or wrong URL. Check the URL in a browser.
+- JSONDecodeError
+    -> Response is not JSON. Print r.text and r.status_code.
+- 401 Unauthorized / 403
+    -> API key missing or wrong.
+- 429 Too Many Requests
+    -> Rate limit reached. Wait and retry with fewer calls.
+- KeyError: 'hourly'
+    -> API returned an error. Print weather to see the message.
+- Code runs but no graph
+    -> Add plt.show()
+
+----------------------------------------------------------
+7. ORAL: 30 SECOND SCRIPT (speak this)
+----------------------------------------------------------
+"In this experiment I used Google Colab, a cloud based notebook
+service, to call REST APIs using Python. I used the requests
+library to send GET requests to a public API and received data in
+JSON format. I converted the JSON into a pandas DataFrame,
+analysed it and plotted a graph with matplotlib. I also sent a POST
+request and handled errors using status codes and try-except. The
+code ran on Google's cloud, so I did not need to install anything
+on my own system. This shows how cloud services and APIs are used
+for data collection and analysis."
+
+----------------------------------------------------------
+8. LIKELY VIVA QUESTIONS WITH SHORT ANSWERS
+----------------------------------------------------------
+Q1. What is Google Colab?
+A. A free cloud based Jupyter notebook from Google where Python
+   code runs on Google's servers through the browser.
+
+Q2. Why is Colab useful?
+A. No installation, free GPU/TPU, easy sharing, saved on Drive,
+   libraries preinstalled.
+
+Q3. Which cloud service model is Colab?
+A. SaaS (you use the notebook as a service). It also gives PaaS
+   like features for running code.
+
+Q4. What is an API?
+A. A set of rules that allows one software to talk to another.
+
+Q5. What is a REST API?
+A. API that uses HTTP methods (GET, POST, PUT, DELETE) on URLs
+   and usually returns JSON.
+
+Q6. What is JSON?
+A. A light text format of key-value pairs used to exchange data.
+
+Q7. What is the difference between GET and POST?
+A. GET reads data (parameters in URL). POST sends/creates data
+   (data in the request body).
+
+Q8. What does status code 200, 201, 404 mean?
+A. 200 = OK, 201 = Created, 404 = Not Found.
+
+Q9. What is an endpoint?
+A. The URL where an API resource can be accessed.
+
+Q10. What is an API key and how do you keep it safe?
+A. A secret code that identifies you. Keep it in Colab Secrets
+   or environment variables, never in public code.
+
+Q11. What does response.json() do?
+A. Converts the JSON response into a Python dictionary/list.
+
+Q12. What is pandas DataFrame?
+A. A 2-D table structure to store and analyse data.
+
+Q13. What does the "!" mean in Colab?
+A. It runs a shell command, for example !pip install pandas.
+
+Q14. What is rate limiting?
+A. API limits how many requests you can send in a time period.
+
+Q15. What is the difference between Colab and Jupyter?
+A. Jupyter runs on your own machine. Colab is hosted by Google
+   in the cloud.
+
+Q16. How is Colab connected to cloud computing?
+A. It gives on-demand compute (CPU/GPU/RAM) over the internet,
+   which is the main idea of cloud computing.
+
+Q17. How can you save the results?
+A. df.to_csv(), download file, or mount Google Drive.
+
+Q18. What is the use of timeout in requests?
+A. Stops waiting if the server does not respond in that time.
+
+Q19. What is the difference between requests.get and curl?
+A. Both send HTTP requests. requests is Python code, curl is a
+   command-line tool.
+
+Q20. Name some public APIs.
+A. JSONPlaceholder, Open-Meteo (weather), GitHub API, NASA API,
+   REST Countries.
+
+----------------------------------------------------------
+9. MEMORY TRICKS
+----------------------------------------------------------
+- Flow: CALL -> JSON -> DATAFRAME -> ANALYSE -> PLOT -> SAVE
+- Libraries: R P M = requests, pandas, matplotlib
+- HTTP verbs: CRUD = POST(Create), GET(Read), PUT(Update),
+  DELETE(Delete)
+- Status first digit: 2 = good, 4 = your mistake, 5 = server
+  mistake
+- API = waiter, JSON = food, Colab = your table in the cloud
+
+==========================================================
+END OF EXPERIMENT 6
+==========================================================

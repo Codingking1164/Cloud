@@ -1,0 +1,444 @@
+==========================================================
+EXPERIMENT 7: XEN BASED VIRTUAL MACHINE MIGRATION
+==========================================================
+NOTE: Xen is the fussiest experiment to set up. Package names and
+Xen support change between Ubuntu versions. If a package is not
+found, run:  apt-cache search xen-hypervisor   and use the one
+that appears. Ask your lab which Ubuntu version / machines you get.
+
+----------------------------------------------------------
+1. AIM
+----------------------------------------------------------
+To install the Xen hypervisor on Ubuntu, create a guest virtual
+machine (DomU), and migrate it from one Xen host to another using
+the xl toolstack (live migration and save/restore).
+
+----------------------------------------------------------
+2. THEORY (learn this)
+----------------------------------------------------------
+XEN
+  Open source Type 1 (bare metal) hypervisor. It runs directly on
+  hardware, below the operating system. Used by AWS (older EC2),
+  Rackspace, IBM clouds, XenServer / XCP-ng.
+
+XEN ARCHITECTURE (very important)
+  Xen hypervisor = thin layer on the hardware. Manages CPU and
+                   memory.
+  Dom0 (Domain 0)= first, privileged VM. Runs Linux (Ubuntu). It
+                   controls Xen, creates/stops other VMs, handles
+                   drivers.
+  DomU           = unprivileged guest VMs (user VMs). Run the
+                   applications.
+
+PARAVIRTUALIZATION (PV) vs HVM
+  PV  = guest OS is modified and knows it is virtualized. Fast.
+        No hardware virtualization needed.
+  HVM = full virtualization, guest OS is unmodified (even
+        Windows). Needs Intel VT-x / AMD-V.
+
+xl
+  Xen's command-line toolstack. (xm is the old deprecated tool.)
+
+VM MIGRATION
+  Moving a VM from one physical host to another.
+  Live migration: VM keeps running, downtime is milliseconds.
+  Offline migration: save the VM state to a file, copy it, restore
+  it on the other host.
+
+HOW XEN LIVE MIGRATION WORKS (PRE-COPY)
+  1. Memory pages are copied to destination while VM runs.
+  2. Modified (dirty) pages are copied again in rounds.
+  3. VM is paused for a very short time, final pages and CPU
+     state are sent.
+  4. VM resumes on the destination. Source copy is destroyed.
+
+REQUIREMENTS
+  - Same Xen version on both hosts
+  - Shared storage (NFS) at the SAME path on both
+  - SSH access between hosts (xl migrate uses ssh)
+  - Both hosts on the same network, similar CPUs
+
+XEN vs KVM
+  Xen: separate hypervisor + Dom0, supports PV and HVM.
+  KVM: part of the Linux kernel, needs hardware virtualization.
+
+----------------------------------------------------------
+3. DIAGRAM (draw this)
+----------------------------------------------------------
+
+   +---------------------------+        +---------------------------+
+   | XEN HOST 1 (xen1)         |        | XEN HOST 2 (xen2)         |
+   | +------+ +------+         |  xl    | +------+                  |
+   | | Dom0 | | DomU |  ------>|migrate | | Dom0 | | DomU (moved)    |
+   | |Ubuntu| | vm1  |         | -----> | |Ubuntu| |  vm1            |
+   | +------+ +------+         |        | +------+ +------+          |
+   |    XEN HYPERVISOR         |        |    XEN HYPERVISOR         |
+   |       HARDWARE            |        |       HARDWARE            |
+   +-------------+-------------+        +-------------+-------------+
+                 |                                    |
+                 +---------> SHARED STORAGE <---------+
+                           (NFS /srv/xenstore)
+
+Hostnames: xen1 = 192.168.1.10 (source + NFS server)
+           xen2 = 192.168.1.11 (destination)
+Replace with YOUR IPs. Run commands as root (sudo -i) to avoid
+ssh/user problems.
+
+==========================================================
+PART A: INSTALL XEN (on BOTH xen1 and xen2)
+==========================================================
+
+STEP 1: Update
+    sudo apt update
+
+STEP 2: Install Xen hypervisor and tools
+    sudo apt install -y xen-hypervisor-amd64 xen-tools bridge-utils
+  (If "package not found": apt-cache search xen-hypervisor
+  then install that one, for example xen-hypervisor-4.17-amd64,
+  plus xen-utils.)
+
+STEP 3: Reboot into Xen
+    sudo reboot
+  At the GRUB menu choose the entry like
+  "Ubuntu GNU/Linux, with Xen hypervisor". (It is usually the
+  default after installing.)
+
+STEP 4: Verify Xen is running
+    sudo xl list
+  EXPECTED:
+    Name          ID   Mem VCPUs   State   Time(s)
+    Domain-0       0  xxxx    x     r-----    xx.x
+  Domain-0 means Xen is working and you are inside Dom0.
+    sudo xl info | head -20
+  (shows xen_version, memory, CPUs)
+
+==========================================================
+PART B: PREPARE FOR MIGRATION
+==========================================================
+
+STEP 1: Hostnames (BOTH hosts)
+    sudo nano /etc/hosts
+  Add:
+    192.168.1.10   xen1
+    192.168.1.11   xen2
+  Test: ping -c 2 xen2
+
+STEP 2: Passwordless SSH as root from xen1 to xen2
+  On xen1:
+    sudo -i
+    ssh-keygen -t rsa          (Enter for all)
+    ssh-copy-id root@xen2
+    ssh root@xen2              (must NOT ask password)
+    exit
+  (If root login is blocked, on xen2 edit /etc/ssh/sshd_config:
+   PermitRootLogin prohibit-password  then
+   sudo systemctl restart ssh. If root has no password set:
+   sudo passwd root, copy the key, then lock it again.)
+  Also do the same from xen2 to xen1 if you want to migrate back.
+
+STEP 3: Firewall (lab testing only, on BOTH)
+    sudo ufw disable
+
+STEP 4: Shared storage with NFS
+  --- On xen1 (NFS server) ---
+    sudo apt install -y nfs-kernel-server
+    sudo mkdir -p /srv/xenstore
+    sudo chmod -R 777 /srv/xenstore
+    sudo nano /etc/exports
+  Add:
+    /srv/xenstore *(rw,sync,no_root_squash,no_subtree_check)
+  Apply:
+    sudo exportfs -a
+    sudo systemctl restart nfs-kernel-server
+
+  --- On xen2 (NFS client) ---
+    sudo apt install -y nfs-common
+    sudo mkdir -p /srv/xenstore
+    sudo mount -t nfs xen1:/srv/xenstore /srv/xenstore
+    df -h | grep xenstore
+  Test: on xen1  touch /srv/xenstore/test.txt
+        on xen2  ls /srv/xenstore    (test.txt must appear)
+  The path must be the SAME on both hosts.
+
+STEP 5: Network bridge for guests (needed if the guest uses
+        network)
+  EASY LAB TRICK: skip the bridge and remove the network card from
+  the guest config (see Part C step 3). The migration still works.
+
+  PROPER WAY (Ubuntu with netplan), edit
+  /etc/netplan/00-installer-config.yaml (name may differ):
+    network:
+      version: 2
+      ethernets:
+        enp0s3:              # your interface name from "ip a"
+          dhcp4: false
+      bridges:
+        xenbr0:
+          interfaces: [enp0s3]
+          dhcp4: true
+  Apply:   sudo netplan apply
+  (Careful: wrong config can cut your network. Keep a backup of
+  the file first.)
+
+==========================================================
+PART C: CREATE A GUEST VM (DomU) ON xen1
+==========================================================
+
+STEP 1: Check the mirror in xen-tools config
+    sudo nano /etc/xen-tools/xen-tools.conf
+  Make sure these exist (uncomment / set):
+    dir     = /srv/xenstore
+    pygrub  = 1
+    size    = 2Gb
+    memory  = 512Mb
+    swap    = 256Mb
+    dhcp    = 1
+    mirror  = http://archive.ubuntu.com/ubuntu/
+  (Needs internet. It builds the OS using debootstrap.)
+
+STEP 2: Create the guest image
+    sudo xen-create-image --hostname=vm1 --memory=512mb --vcpus=1 \
+        --dir=/srv/xenstore --size=2Gb --swap=256mb --dhcp \
+        --pygrub --dist=jammy
+  (Use your Ubuntu codename for --dist if you want to match the
+  host: jammy = 22.04, noble = 24.04. If it fails, try a Debian
+  release your mirror supports.)
+  It takes a few minutes. At the end it shows the root password,
+  and creates the config file /etc/xen/vm1.cfg. NOTE THE PASSWORD.
+
+STEP 3: Look at / edit the config
+    cat /etc/xen/vm1.cfg
+  Important lines:
+    name   = 'vm1'
+    memory = '512'
+    vcpus  = 1
+    disk   = [ 'file:/srv/xenstore/domains/vm1/disk.img,xvda2,w',
+               'file:/srv/xenstore/domains/vm1/swap.img,xvda1,w' ]
+    vif    = [ 'ip=..., bridge=xenbr0' ]
+  If you did NOT set up the bridge, change the vif line to:
+    vif    = [ ]
+
+STEP 4: Start the guest
+    sudo xl create /etc/xen/vm1.cfg
+  ("create" in Xen means "start")
+
+STEP 5: Verify
+    sudo xl list
+  EXPECTED:
+    Domain-0   0   ...   r-----
+    vm1        1   512   -b----   (b = blocked/idle, normal)
+
+STEP 6: (Optional) open the guest console
+    sudo xl console vm1
+  Login as root with the password shown earlier.
+  Exit console: Ctrl + ]
+
+==========================================================
+PART D: LIVE MIGRATION (main experiment)
+==========================================================
+
+STEP 1: Check before migration
+  On xen1:  sudo xl list      -> vm1 is listed
+  On xen2:  sudo xl list      -> only Domain-0
+
+STEP 2: Migrate (on xen1, as root)
+    sudo xl migrate vm1 xen2
+  (xl migrate is LIVE by default and uses SSH to connect to xen2.)
+  Expected output:
+    migration target: Ready to receive domain.
+    Saving to migration stream new xl format (info 0x3/0x0/...)
+    Loading new save file <incoming migration stream> (new xl fmt ...)
+    ...
+    migration target: Domain started.
+
+STEP 3: Verify after migration
+  On xen1:  sudo xl list     -> vm1 is GONE
+  On xen2:  sudo xl list     -> vm1 is RUNNING   (migrated!)
+
+STEP 4: Prove the VM was not rebooted (optional)
+  On xen2:  sudo xl console vm1  and run  uptime
+  Uptime keeps counting (it did not restart).
+
+STEP 5: Migrate back (optional)
+  On xen2:  sudo xl migrate vm1 xen1
+
+==========================================================
+PART E: OFFLINE MIGRATION USING SAVE / RESTORE
+==========================================================
+Use when live migration is not possible.
+
+STEP 1: Save the running VM state to a file (on source)
+    sudo xl save vm1 /srv/xenstore/vm1.save
+  (The VM stops and its memory state is written to the file.)
+
+STEP 2: On the destination host (path is shared by NFS)
+    ls /srv/xenstore/vm1.save
+    sudo xl restore /srv/xenstore/vm1.save
+  (If the file is not on shared storage, copy it with scp first,
+  and the disk images too.)
+
+STEP 3: Verify
+    sudo xl list
+  EXPECTED: vm1 running again, exactly from where it stopped.
+
+(Alternative simple offline method: xl shutdown vm1, copy
+/etc/xen/vm1.cfg and disk images to the destination, then
+xl create /etc/xen/vm1.cfg there.)
+
+==========================================================
+xl COMMAND CHEAT SHEET
+==========================================================
+xl list                   list all domains (VMs)
+xl create file.cfg        start a VM
+xl console vm1            open console (exit Ctrl+])
+xl shutdown vm1           graceful shutdown
+xl destroy vm1            force power off
+xl reboot vm1             reboot VM
+xl pause vm1 / unpause    freeze / resume VM
+xl mem-set vm1 256        change memory of running VM
+xl vcpu-list              show CPU usage by domains
+xl info                   hypervisor / host info
+xl top                    live resource usage (like top)
+xl save vm1 file          save VM state to file
+xl restore file           restore VM from file
+xl migrate vm1 host       live migrate to another Xen host
+
+----------------------------------------------------------
+4. COMMON ERRORS AND QUICK FIXES
+----------------------------------------------------------
+- xl list: "cannot init xl context" / "Is xen running?"
+    -> You booted the normal kernel. Reboot and pick the Xen
+       entry in GRUB.
+- Ubuntu does not boot after installing Xen
+    -> Choose the normal GRUB entry (Advanced options) to boot
+       without Xen, and check Xen/kernel version compatibility.
+- Package xen-hypervisor-amd64 not found
+    -> apt-cache search xen-hypervisor, install what is listed.
+- xen-create-image fails to download
+    -> No internet or wrong mirror in xen-tools.conf.
+- xl create: "could not find bridge xenbr0"
+    -> Create the bridge (Part B step 5) or set vif = [ ] in
+       the config.
+- xl create: disk image not found
+    -> Check disk path in /etc/xen/vm1.cfg and that
+       /srv/xenstore is mounted.
+- xl migrate: ssh asks password / permission denied
+    -> Setup root passwordless ssh to xen2 (Part B step 2).
+- xl migrate fails: "domain not found on destination" / disk
+  error
+    -> Shared storage path differs. Mount NFS at the same path on
+       both hosts.
+- "Domain is already running" / name already used
+    -> Destination already has a vm1. xl destroy vm1 there first.
+- Hosts are VMs and Xen does not boot
+    -> Xen inside VirtualBox/VMware needs nested virtualization,
+       many setups do not work. Use real machines if possible.
+
+----------------------------------------------------------
+5. ORAL: 30 SECOND SCRIPT (speak this)
+----------------------------------------------------------
+"In this experiment I performed virtual machine migration using
+the Xen hypervisor on Ubuntu. Xen is a Type 1 hypervisor with a
+privileged Dom0 and guest VMs called DomUs. I installed Xen on two
+hosts, set up passwordless SSH and an NFS shared storage so both
+hosts can access the VM disk. I created a guest VM using
+xen-create-image, started it with xl create, and then migrated it
+live to the second host with the xl migrate command. After the
+migration, xl list showed the VM running on the destination host
+and removed from the source. I also showed offline migration using
+xl save and xl restore."
+
+----------------------------------------------------------
+6. LIKELY VIVA QUESTIONS WITH SHORT ANSWERS
+----------------------------------------------------------
+Q1. What is Xen?
+A. An open source Type 1 hypervisor that runs directly on
+   hardware and runs multiple VMs.
+
+Q2. What is Dom0 and DomU?
+A. Dom0 = privileged control domain that manages Xen and drivers.
+   DomU = unprivileged guest VMs.
+
+Q3. What is the difference between PV and HVM?
+A. PV: guest OS is modified, aware of Xen, faster, no hardware
+   support needed. HVM: unmodified OS, needs VT-x/AMD-V.
+
+Q4. What is xl?
+A. The command line toolstack to manage Xen VMs (replaces xm).
+
+Q5. What does "xl create" do?
+A. Starts a VM from its configuration file.
+
+Q6. What is VM migration?
+A. Moving a VM from one physical host to another.
+
+Q7. Live vs offline migration?
+A. Live: VM keeps running, millisecond downtime. Offline: VM is
+   stopped/saved, moved, then started/restored.
+
+Q8. Explain pre-copy migration.
+A. Copy memory while VM runs, re-copy dirty pages in rounds,
+   pause briefly for the last pages and CPU state, resume on
+   destination.
+
+Q9. Why shared storage?
+A. So the disk need not be moved, only memory and CPU state. It
+   makes migration fast.
+
+Q10. How does xl migrate connect to the destination?
+A. Through SSH, so passwordless SSH is needed.
+
+Q11. What does xl save / xl restore do?
+A. save writes the VM's memory state to a file and stops it.
+   restore starts a VM from that file.
+
+Q12. What is the Xen config file?
+A. A text file in /etc/xen/ with name, memory, vcpus, disk and
+   network (vif) settings of the VM.
+
+Q13. What is pygrub?
+A. A bootloader that lets a PV guest boot its own kernel from its
+   disk.
+
+Q14. Difference between Xen and KVM?
+A. Xen is a separate bare-metal hypervisor with Dom0, supports PV
+   and HVM. KVM is a Linux kernel module that needs hardware
+   virtualization.
+
+Q15. What is a bridge (xenbr0)?
+A. A virtual switch in Dom0 that connects guest VMs to the
+   physical network.
+
+Q16. Where is Xen used?
+A. AWS EC2 (older generations), Rackspace, XenServer / XCP-ng,
+   many private clouds.
+
+Q17. What is the meaning of state "r-----" and "-b----" in xl
+     list?
+A. r = running, b = blocked (waiting, idle), p = paused,
+   s = shutdown, c = crashed, d = dying.
+
+Q18. What is ballooning?
+A. Changing the memory of a running VM using xl mem-set.
+
+Q19. Why migrate VMs?
+A. Hardware maintenance, load balancing, fault tolerance, power
+   saving.
+
+Q20. Is Dom0 a VM?
+A. Yes, it is a special privileged VM that starts first.
+
+----------------------------------------------------------
+7. MEMORY TRICKS
+----------------------------------------------------------
+- Xen = "Dom0 is the Boss, DomU are the Workers"
+- Migration prep: HOSTS, SSH, NFS, FIREWALL, GUEST
+- Commands: list, create, console, migrate  (L C C M)
+- Live: xl migrate vm1 host   |  Offline: xl save + xl restore
+- Same idea as KVM: pre-copy -> dirty pages -> short pause ->
+  resume
+- Xen check: xl list must show Domain-0
+
+==========================================================
+END OF EXPERIMENT 7
+==========================================================

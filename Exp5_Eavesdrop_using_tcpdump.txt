@@ -1,0 +1,347 @@
+==========================================================
+EXPERIMENT 5: EAVESDROPPING (PACKET SNIFFING) USING tcpdump
+==========================================================
+NOTE: Do this only on your own lab machines / network you have
+permission for. Sniffing other people's traffic is illegal.
+
+----------------------------------------------------------
+1. AIM
+----------------------------------------------------------
+To capture and analyse network traffic on Ubuntu using tcpdump,
+and to show how plain text data (like passwords over HTTP) can
+be eavesdropped, and why encryption (HTTPS/SSH) is needed.
+
+----------------------------------------------------------
+2. THEORY (learn this)
+----------------------------------------------------------
+EAVESDROPPING (SNIFFING)
+  Secretly listening to / capturing data travelling over a
+  network. It is a PASSIVE attack: the attacker only watches,
+  does not change data. It breaks CONFIDENTIALITY.
+
+tcpdump
+  Free command-line packet analyser. It captures packets passing
+  through a network interface and shows or saves them. Uses the
+  libpcap library. Needs root (sudo).
+
+PACKET
+  Small unit of data on the network: header (source, destination,
+  protocol, ports) + payload (actual data).
+
+PROMISCUOUS MODE
+  Network card accepts ALL packets it sees, not only those meant
+  for it. tcpdump turns this on by default.
+
+WHERE CAN YOU SNIFF?
+  - Your own machine's traffic (always)
+  - Others' traffic only if you are on the path: hub, Wi-Fi,
+    port mirroring, ARP spoofing / man-in-the-middle.
+    (On a modern switch you only see your own traffic.)
+
+PLAIN TEXT vs ENCRYPTED PROTOCOLS
+  Plain text (can be read): HTTP, FTP, Telnet, SMTP, POP3
+  Encrypted (cannot be read): HTTPS, SSH, SFTP, VPN
+
+HOW TO PREVENT EAVESDROPPING
+  Use HTTPS/TLS, SSH, VPN, WPA2/WPA3 Wi-Fi, switches (not hubs),
+  end-to-end encryption.
+
+TCP FLAGS (seen in tcpdump output)
+  [S]  = SYN (start connection)
+  [S.] = SYN-ACK
+  [.]  = ACK
+  [P.] = PUSH+ACK (data being sent)
+  [F.] = FIN (close connection)
+  [R]  = RESET
+  3-way handshake: SYN -> SYN-ACK -> ACK
+
+SIMILAR TOOLS
+  Wireshark (GUI), tshark, ngrep, Ettercap.
+
+----------------------------------------------------------
+3. DIAGRAM (draw this)
+----------------------------------------------------------
+
+  Client ----------------- network ----------------- Server
+  (user sends                |                   (receives
+   password over HTTP)       |                    request)
+                             v
+                     +---------------+
+                     |  tcpdump      |  captures a copy of
+                     |  (attacker)   |  every packet, reads
+                     +---------------+  the password in text
+
+----------------------------------------------------------
+4. STEPWISE EXECUTION
+----------------------------------------------------------
+
+STEP 1: Install tcpdump
+    sudo apt update
+    sudo apt install -y tcpdump curl
+    tcpdump --version
+
+STEP 2: Find your network interface name
+    ip a
+    sudo tcpdump -D
+  Note the name (examples: ens33, enp0s3, eth0, wlan0, lo, any).
+  Below we write  eth0  . REPLACE it with your own.
+  (lo = loopback = traffic inside your own machine.
+   any = all interfaces.)
+
+STEP 3: First capture - 10 packets
+    sudo tcpdump -i eth0 -c 10
+  -i = interface   -c = count (stop after 10 packets)
+  (Browse a website or ping in another terminal to generate
+  traffic.)
+
+STEP 4: Useful display options
+    sudo tcpdump -i eth0 -c 10 -n          (no DNS names, show IPs)
+    sudo tcpdump -i eth0 -c 10 -nn         (no names, no port names)
+    sudo tcpdump -i eth0 -c 10 -v          (more detail, -vv more)
+    sudo tcpdump -i eth0 -c 5 -A           (show data as ASCII text)
+    sudo tcpdump -i eth0 -c 5 -X           (show hex + ASCII)
+
+----------------------------------------------------------
+DEMO 1: CAPTURE ICMP (ping)
+----------------------------------------------------------
+  Terminal 1:
+    sudo tcpdump -i any -nn icmp
+  Terminal 2:
+    ping -c 4 8.8.8.8
+  Expected in Terminal 1:
+    IP 192.168.1.10 > 8.8.8.8: ICMP echo request, id ..., seq 1
+    IP 8.8.8.8 > 192.168.1.10: ICMP echo reply, id ..., seq 1
+
+----------------------------------------------------------
+DEMO 2: CAPTURE DNS
+----------------------------------------------------------
+  Terminal 1:
+    sudo tcpdump -i any -nn port 53
+  Terminal 2:
+    nslookup google.com
+  Expected: query "A? google.com" and the reply with IP address.
+
+----------------------------------------------------------
+DEMO 3: EAVESDROP A PASSWORD SENT OVER HTTP (MAIN DEMO)
+----------------------------------------------------------
+  Terminal 1 (start a simple web server):
+    mkdir ~/sniff && cd ~/sniff
+    python3 -m http.server 8000
+
+  Terminal 2 (start the sniffer on loopback):
+    sudo tcpdump -i lo -nn -A port 8000
+
+  Terminal 3 (client sends a login with username and password):
+    curl -d "username=admin&password=secret123" http://localhost:8000/login
+
+  EXPECTED in Terminal 2: you can read in plain text:
+    POST /login HTTP/1.1
+    Host: localhost:8000
+    ...
+    username=admin&password=secret123
+
+  CONCLUSION: HTTP sends data in plain text, anyone sniffing can
+  read the username and password.
+
+  Another way - HTTP Basic Authentication:
+    curl -u admin:secret123 http://localhost:8000/
+  In tcpdump you will see a line like:
+    Authorization: Basic YWRtaW46c2VjcmV0MTIz
+  Decode it:
+    echo "YWRtaW46c2VjcmV0MTIz" | base64 -d
+  Output: admin:secret123
+  (Base64 is only encoding, NOT encryption.)
+
+  If you have TWO machines: run the web server on machine B,
+  run curl from machine A to B's IP, and run tcpdump on B:
+    sudo tcpdump -i eth0 -nn -A port 8000 and host <A's IP>
+
+----------------------------------------------------------
+DEMO 4: SHOW THAT HTTPS IS ENCRYPTED (compare)
+----------------------------------------------------------
+  Terminal 1:
+    sudo tcpdump -i any -nn -A port 443 -c 20
+  Terminal 2:
+    curl -s https://example.com > /dev/null
+  Expected: only unreadable gibberish (encrypted TLS data),
+  no readable text. This is why HTTPS protects against sniffing.
+
+----------------------------------------------------------
+DEMO 5: SEE THE TCP 3-WAY HANDSHAKE
+----------------------------------------------------------
+  Terminal 1:
+    sudo tcpdump -i lo -nn port 8000 -c 10
+  Terminal 2 (server is still running from Demo 3):
+    curl http://localhost:8000
+  Expected flags in order:
+    Flags [S]    (SYN)
+    Flags [S.]   (SYN-ACK)
+    Flags [.]    (ACK)
+    Flags [P.]   (data)
+    Flags [F.]   (close)
+
+----------------------------------------------------------
+5. FILTERS (very important for viva)
+----------------------------------------------------------
+By host:
+    sudo tcpdump -i eth0 host 192.168.1.20
+    sudo tcpdump -i eth0 src host 192.168.1.20
+    sudo tcpdump -i eth0 dst host 192.168.1.20
+By port:
+    sudo tcpdump -i eth0 port 80
+    sudo tcpdump -i eth0 portrange 20-25
+By protocol:
+    sudo tcpdump -i eth0 tcp
+    sudo tcpdump -i eth0 udp
+    sudo tcpdump -i eth0 icmp
+By network:
+    sudo tcpdump -i eth0 net 192.168.1.0/24
+Combine with and / or / not:
+    sudo tcpdump -i eth0 tcp and port 80 and host 192.168.1.20
+    sudo tcpdump -i eth0 not port 22
+    (Tip: filter "not port 22" when you are using SSH, otherwise
+    your own SSH traffic floods the screen.)
+
+----------------------------------------------------------
+6. SAVE AND READ CAPTURE FILE
+----------------------------------------------------------
+Save packets to a file (pcap):
+    sudo tcpdump -i eth0 -c 50 -w capture.pcap
+Read the file later:
+    tcpdump -nn -r capture.pcap
+Read as text:
+    tcpdump -nn -A -r capture.pcap
+(Open capture.pcap in Wireshark for GUI view:
+    sudo apt install -y wireshark  then  wireshark capture.pcap)
+Stop capture: press Ctrl + C. It prints the summary:
+    X packets captured / received by filter / dropped by kernel
+
+----------------------------------------------------------
+7. tcpdump OPTIONS CHEAT SHEET
+----------------------------------------------------------
+-i IFACE   interface           -c N     stop after N packets
+-n         do not resolve names -nn     no names, no port names
+-v / -vv   verbose             -A       print ASCII
+-X         hex + ASCII         -w FILE  write to file
+-r FILE    read from file      -D       list interfaces
+-s 0       capture full packet (no truncation)
+-e         show Ethernet (MAC) header
+
+----------------------------------------------------------
+8. COMMON ERRORS AND QUICK FIXES
+----------------------------------------------------------
+- "tcpdump: eth0: No such device exists"
+    -> Wrong interface name. Check with: ip a   or tcpdump -D
+- "You don't have permission to capture on that device"
+    -> Use sudo.
+- tcpdump shows nothing
+    -> No traffic on that interface. Generate traffic (ping, curl)
+       or use -i any. For local server use -i lo.
+- Screen flooded with SSH packets
+    -> Add filter: not port 22
+- Output has names / is slow
+    -> Use -nn.
+- "tcpdump: command not found"
+    -> sudo apt install tcpdump
+- Cannot see other machines' traffic
+    -> Normal on a switched network. You only see your own
+       traffic unless you are in the path.
+
+----------------------------------------------------------
+9. ORAL: 30 SECOND SCRIPT (speak this)
+----------------------------------------------------------
+"In this experiment I used tcpdump on Ubuntu to capture and
+analyse network packets. I installed tcpdump, selected the network
+interface and captured ping and DNS traffic using filters. Then I
+ran a simple HTTP server and sent a login request with a username
+and password. With the tcpdump -A option I could read the
+credentials in plain text, which shows that HTTP is insecure and
+that eavesdropping is a passive attack on confidentiality. When I
+captured HTTPS traffic, the data was unreadable because it is
+encrypted. So we should always use HTTPS, SSH and VPN."
+
+----------------------------------------------------------
+10. LIKELY VIVA QUESTIONS WITH SHORT ANSWERS
+----------------------------------------------------------
+Q1. What is tcpdump?
+A. A command-line packet sniffer/analyser that captures network
+   packets on an interface.
+
+Q2. What is eavesdropping?
+A. Secretly listening to or capturing network communication
+   without permission. It is a passive attack.
+
+Q3. Which security goal does eavesdropping break?
+A. Confidentiality.
+
+Q4. What is packet sniffing?
+A. Capturing and inspecting packets travelling on a network.
+
+Q5. What is promiscuous mode?
+A. NIC accepts all packets it sees, not only those addressed to
+   it.
+
+Q6. Which library does tcpdump use?
+A. libpcap.
+
+Q7. Why do you need sudo for tcpdump?
+A. Capturing raw packets needs root privileges.
+
+Q8. What do -i, -c, -n, -w, -r mean?
+A. interface, count, no name resolution, write file, read file.
+
+Q9. What does -A do and what does -X do?
+A. -A shows payload in ASCII. -X shows hex and ASCII.
+
+Q10. Name some tcpdump filters.
+A. host, src, dst, port, net, tcp, udp, icmp; combined with and,
+   or, not.
+
+Q11. What is the TCP 3-way handshake?
+A. SYN, SYN-ACK, ACK. Shown as flags [S], [S.], [.].
+
+Q12. Why can you read passwords over HTTP?
+A. HTTP sends data in plain text with no encryption.
+
+Q13. Why can you not read HTTPS traffic?
+A. HTTPS uses TLS encryption, so the payload is unreadable.
+
+Q14. Is Base64 encryption?
+A. No. It is just encoding and can be reversed easily.
+
+Q15. How to protect against eavesdropping?
+A. Use HTTPS, SSH, VPN, strong Wi-Fi encryption, switches, and
+   encrypt data end to end.
+
+Q16. Passive vs active attack?
+A. Passive: only listen (sniffing). Active: change or inject data
+   (man-in-the-middle, spoofing).
+
+Q17. tcpdump vs Wireshark?
+A. tcpdump = command line, light. Wireshark = GUI, deeper
+   analysis. Both can use pcap files.
+
+Q18. What is a pcap file?
+A. File format that stores captured packets.
+
+Q19. What does interface "lo" mean?
+A. Loopback interface for traffic inside the same machine
+   (127.0.0.1).
+
+Q20. Relation to cloud computing?
+A. Cloud security: data in transit must be encrypted. Cloud
+   admins use packet capture to troubleshoot networks, attackers
+   use it to steal data, so use TLS inside the cloud also.
+
+----------------------------------------------------------
+11. MEMORY TRICKS
+----------------------------------------------------------
+- Command pattern:  sudo tcpdump -i INTERFACE  FILTER  -nn -A
+- "Capture, Filter, Show, Save" = -c, filters, -A/-X, -w
+- TCP handshake = S, S-dot, dot  ("Sam Sends Dots")
+- HTTP = open postcard (anyone reads). HTTPS = sealed envelope.
+- Eavesdropping = Passive, hits Confidentiality.
+
+==========================================================
+END OF EXPERIMENT 5
+==========================================================

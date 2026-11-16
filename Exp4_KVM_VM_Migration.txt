@@ -1,0 +1,408 @@
+==========================================================
+EXPERIMENT 4: KVM VIRTUAL MACHINE MIGRATION
+==========================================================
+
+----------------------------------------------------------
+1. AIM
+----------------------------------------------------------
+To install KVM on two Ubuntu hosts, create a virtual machine on
+one host, and migrate it to the other host (live migration using
+shared storage, and offline migration).
+
+----------------------------------------------------------
+2. THEORY (learn this)
+----------------------------------------------------------
+VIRTUALIZATION
+  Running many virtual machines (VMs) on one physical machine
+  by sharing its CPU, RAM, disk and network.
+
+HYPERVISOR
+  Software that creates and runs VMs.
+    Type 1 (bare metal): runs directly on hardware. Ex: KVM, Xen,
+                         VMware ESXi.
+    Type 2 (hosted)    : runs on top of an OS. Ex: VirtualBox.
+
+KVM (Kernel-based Virtual Machine)
+  A module inside the Linux kernel that turns Linux into a
+  Type 1 hypervisor. Needs CPU support: Intel VT-x or AMD-V.
+
+KVM STACK (remember these 4)
+  KVM      = kernel module, does CPU and memory virtualization
+  QEMU     = emulates hardware (disk, network, display)
+  libvirt  = management library/API/daemon (libvirtd)
+  virsh    = command line tool to manage VMs
+  (virt-manager = GUI tool, virt-install = create VM from CLI)
+
+VM MIGRATION
+  Moving a running or stopped VM from one physical host (source)
+  to another physical host (destination).
+
+WHY MIGRATE
+  - Hardware maintenance with no downtime
+  - Load balancing between hosts
+  - Fault tolerance / disaster recovery
+  - Energy saving (pack VMs on fewer servers)
+
+TYPES
+  1) LIVE migration    : VM keeps running. Downtime is only a few
+                         milliseconds.
+  2) OFFLINE (cold)    : VM is shut down, files are copied, VM is
+                         started on destination.
+
+HOW LIVE MIGRATION WORKS (PRE-COPY)
+  1. Memory pages are copied to destination while VM still runs.
+  2. Pages changed meanwhile ("dirty pages") are copied again and
+     again.
+  3. VM is paused for a very short time, last dirty pages + CPU
+     state are sent (stop-and-copy).
+  4. VM resumes on destination. Source copy is removed.
+
+REQUIREMENTS FOR LIVE MIGRATION
+  - Both hosts have same KVM/libvirt/QEMU setup
+  - Shared storage (NFS) mounted at the SAME path on both hosts
+  - Passwordless SSH from source to destination
+  - Hostnames resolve, network ports open
+  - Similar CPU type on both hosts
+
+----------------------------------------------------------
+3. DIAGRAM (draw this)
+----------------------------------------------------------
+
+   +-----------------+                   +-----------------+
+   |  HOST 1 (kvm1)  |   virsh migrate   |  HOST 2 (kvm2)  |
+   |  SOURCE         | ----------------> |  DESTINATION    |
+   |  VM: vm1  (run) |   memory + state  |  VM: vm1 (run)  |
+   +--------+--------+                   +--------+--------+
+            |                                     |
+            +----------> SHARED STORAGE <---------+
+                        (NFS: /srv/vmstore)
+                          vm1 disk image
+
+Hostnames used below: kvm1 = 192.168.1.10 (source + NFS server)
+                      kvm2 = 192.168.1.11 (destination)
+Replace with YOUR IPs and username (same username on both).
+
+==========================================================
+PART A: INSTALL KVM (do on BOTH kvm1 and kvm2)
+==========================================================
+
+STEP 1: Check CPU supports virtualization
+    egrep -c '(vmx|svm)' /proc/cpuinfo
+  Expected: number greater than 0. (If 0, enable VT-x/AMD-V in
+  BIOS. If your hosts are VMs, enable nested virtualization.)
+
+STEP 2: Install tool and check KVM
+    sudo apt update
+    sudo apt install -y cpu-checker
+    kvm-ok
+  Expected: "KVM acceleration can be used"
+
+STEP 3: Install KVM packages
+    sudo apt install -y qemu-kvm libvirt-daemon-system libvirt-clients bridge-utils virtinst
+
+STEP 4: Add your user to groups
+    sudo usermod -aG libvirt,kvm $USER
+    newgrp libvirt
+
+STEP 5: Start libvirt service
+    sudo systemctl enable --now libvirtd
+    sudo systemctl status libvirtd
+  Expected: active (running)
+
+STEP 6: Verify
+    virsh list --all
+  Expected: empty table (no VMs yet) with no error.
+
+==========================================================
+PART B: PREPARE FOR MIGRATION
+==========================================================
+
+STEP 1: Hostnames (BOTH hosts)
+    sudo nano /etc/hosts
+  Add:
+    192.168.1.10   kvm1
+    192.168.1.11   kvm2
+  Test: ping -c 2 kvm2
+
+STEP 2: Passwordless SSH from kvm1 to kvm2 (on kvm1)
+    ssh-keygen -t rsa        (press Enter for all)
+    ssh-copy-id ubuntu@kvm2
+    ssh kvm2                 (must NOT ask password)
+    exit
+
+STEP 3: Firewall (lab testing only, on BOTH)
+    sudo ufw disable
+  (Migration uses ports 49152-49215. Firewall can block it.)
+
+STEP 4: Setup shared storage with NFS
+  --- On kvm1 (NFS server) ---
+    sudo apt install -y nfs-kernel-server
+    sudo mkdir -p /srv/vmstore
+    sudo chmod -R 777 /srv/vmstore
+    sudo nano /etc/exports
+  Add this line:
+    /srv/vmstore *(rw,sync,no_root_squash,no_subtree_check)
+  Apply:
+    sudo exportfs -a
+    sudo systemctl restart nfs-kernel-server
+
+  --- On kvm2 (NFS client) ---
+    sudo apt install -y nfs-common
+    sudo mkdir -p /srv/vmstore
+    sudo mount -t nfs kvm1:/srv/vmstore /srv/vmstore
+    df -h | grep vmstore
+  Expected: kvm1:/srv/vmstore shown as mounted.
+
+  Test sharing: on kvm1 run  touch /srv/vmstore/test.txt
+  On kvm2 run  ls /srv/vmstore   -> test.txt must appear.
+
+  IMPORTANT: path /srv/vmstore must be SAME on both hosts.
+
+STEP 5: Create the VM on kvm1 (disk goes on shared storage)
+  Download a tiny test OS image (needs internet, about 20 MB):
+    cd /srv/vmstore
+    wget https://download.cirros-cloud.net/0.6.2/cirros-0.6.2-x86_64-disk.img -O cirros.img
+
+  Create VM:
+    virt-install --name vm1 --memory 512 --vcpus 1 \
+      --disk path=/srv/vmstore/cirros.img,format=qcow2 \
+      --import --os-variant generic \
+      --network network=default --graphics none --noautoconsole
+
+  Check:
+    virsh list --all
+  Expected: vm1   running
+
+  (Optional) Open its console:  virsh console vm1
+  Login: cirros   Password: gocubsgo
+  Exit console: press Ctrl + ]
+
+  (If you have your own ISO instead, use virt-install with
+  --cdrom file.iso and a new disk, or use virt-manager GUI.)
+
+==========================================================
+PART C: LIVE MIGRATION (main experiment)
+==========================================================
+
+STEP 1: Before migration - check where VM is
+  On kvm1:  virsh list
+  Expected: vm1 running
+  On kvm2:  virsh list
+  Expected: empty
+
+STEP 2: Test connection from kvm1 to kvm2's libvirt
+    virsh -c qemu+ssh://ubuntu@kvm2/system list --all
+  Expected: empty list, no error. (This proves remote libvirt
+  access works.)
+
+STEP 3: MIGRATE (on kvm1)
+    virsh migrate --live --persistent --undefinesource --verbose vm1 qemu+ssh://ubuntu@kvm2/system
+
+  Meaning of options:
+    --live          = VM keeps running during migration
+    --persistent    = keep the VM definition on destination
+    --undefinesource= remove the definition from source
+    --verbose       = show progress
+    qemu+ssh://...  = destination URI (libvirt over SSH)
+
+  Expected: progress bar "Migration: [100 %]"
+
+STEP 4: AFTER migration - verify
+  On kvm1:  virsh list --all
+  Expected: vm1 is gone (empty).
+  On kvm2:  virsh list
+  Expected: vm1 running   <- VM moved successfully!
+
+STEP 5: (Optional) Migrate it back
+  On kvm2:
+    virsh migrate --live --persistent --undefinesource --verbose vm1 qemu+ssh://ubuntu@kvm1/system
+
+STEP 6: (Optional) Prove VM stayed running
+  Before migration open console on kvm1 and run:  uptime
+  After migration on kvm2:  virsh console vm1   then run: uptime
+  Uptime continues, it did not reboot.
+
+NO SHARED STORAGE? (migrate disk also)
+  First create an empty disk of SAME name and size on kvm2:
+    (on kvm2) sudo qemu-img create -f qcow2 /var/lib/libvirt/images/cirros.img 1G
+  Then on kvm1 (disk must be in the same path on both):
+    virsh migrate --live --persistent --undefinesource --copy-storage-all --verbose vm1 qemu+ssh://ubuntu@kvm2/system
+  (Slower because the disk is also copied.)
+
+==========================================================
+PART D: OFFLINE (COLD) MIGRATION
+==========================================================
+Use when live migration is not possible.
+
+STEP 1: Shut down the VM (on source host)
+    virsh shutdown vm1
+    virsh list --all       (state must be "shut off")
+
+STEP 2: Save VM configuration (XML)
+    virsh dumpxml vm1 > vm1.xml
+
+STEP 3: Copy XML (and the disk if not on shared storage)
+    scp vm1.xml ubuntu@kvm2:/tmp/
+    scp /srv/vmstore/cirros.img ubuntu@kvm2:/srv/vmstore/
+  (Skip the disk copy if /srv/vmstore is shared by NFS.
+  Disk path in the XML must exist on destination.)
+
+STEP 4: On destination host define and start VM
+    virsh define /tmp/vm1.xml
+    virsh start vm1
+    virsh list
+
+STEP 5: Remove from source
+    virsh undefine vm1
+
+==========================================================
+USEFUL virsh COMMANDS (cheat sheet)
+==========================================================
+virsh list --all          all VMs and their state
+virsh start vm1           start VM
+virsh shutdown vm1        graceful shutdown
+virsh destroy vm1         force power off
+virsh undefine vm1        delete VM definition
+virsh dumpxml vm1         show VM config
+virsh define file.xml     create VM from XML
+virsh domstate vm1        show state
+virsh console vm1         open console (exit: Ctrl+])
+virsh dominfo vm1         CPU, memory info
+virsh migrate --live ...  live migrate
+
+----------------------------------------------------------
+4. COMMON ERRORS AND QUICK FIXES
+----------------------------------------------------------
+- kvm-ok says "KVM acceleration can NOT be used"
+    -> Enable VT-x/AMD-V in BIOS. In VMware/VirtualBox enable
+       nested virtualization.
+- "Failed to connect socket to libvirt-sock" / permission denied
+    -> sudo systemctl start libvirtd, add user to libvirt group,
+       or use sudo virsh ...
+- ssh asks password during migrate
+    -> Redo ssh-copy-id to kvm2
+- "Unable to resolve address kvm2"
+    -> Fix /etc/hosts on both hosts
+- "Unsafe migration: Migration without shared storage is unsafe"
+    -> Disk is not on shared storage. Use NFS (Part B step 4) or
+       add --copy-storage-all.
+- "Cannot access storage file" on destination
+    -> NFS not mounted on kvm2 or path differs. Check
+       df -h | grep vmstore. Check chmod 777 on the folder.
+- "Failed to connect to remote host" / hangs at 0%
+    -> Firewall: sudo ufw disable on both
+- "operation failed: guest CPU doesn't match specification"
+    -> Hosts have different CPUs. Use same CPU model.
+- virt-install: os-variant not found
+    -> use --os-variant generic
+
+----------------------------------------------------------
+5. ORAL: 30 SECOND SCRIPT (speak this)
+----------------------------------------------------------
+"In this experiment I performed virtual machine migration using
+KVM on Ubuntu. I installed KVM and libvirt on two hosts, set up
+passwordless SSH, and configured an NFS shared storage so both
+hosts can see the VM disk at the same path. I created a VM on the
+first host and then migrated it live to the second host using the
+virsh migrate command with the live option. The VM kept running
+during migration and was shown as running on the destination host
+and removed from the source. I also explained offline migration,
+where the VM is shut down and its XML and disk are copied and
+defined on the destination."
+
+----------------------------------------------------------
+6. LIKELY VIVA QUESTIONS WITH SHORT ANSWERS
+----------------------------------------------------------
+Q1. What is KVM?
+A. Kernel-based Virtual Machine. A Linux kernel module that makes
+   Linux a Type 1 hypervisor. Needs Intel VT-x or AMD-V.
+
+Q2. What is a hypervisor? Types?
+A. Software that creates and runs VMs. Type 1 = bare metal (KVM,
+   Xen, ESXi). Type 2 = hosted (VirtualBox).
+
+Q3. Role of QEMU?
+A. Emulates the hardware devices for the VM (disk, network,
+   display). KVM + QEMU give near-native speed.
+
+Q4. What is libvirt and virsh?
+A. libvirt = API and daemon to manage virtualization.
+   virsh = its command line tool.
+
+Q5. What is VM migration?
+A. Moving a VM from one physical host to another.
+
+Q6. Difference between live and offline migration?
+A. Live: VM keeps running, tiny downtime. Offline: VM is shut
+   down, copied, then started on the other host.
+
+Q7. Explain pre-copy live migration.
+A. Memory is copied while VM runs, dirty pages are re-copied in
+   rounds, then VM is paused briefly to send the last pages and
+   CPU state, then resumes on destination.
+
+Q8. What is a dirty page?
+A. A memory page modified by the VM after it was already copied.
+
+Q9. Why is shared storage needed?
+A. So only memory and CPU state move; the disk is already
+   reachable from both hosts. Makes migration fast.
+
+Q10. What is NFS?
+A. Network File System, lets a folder be shared over the network.
+
+Q11. What if no shared storage?
+A. Use --copy-storage-all, the disk is also copied (slower).
+
+Q12. What does qemu+ssh://host/system mean?
+A. libvirt connection URI: connect to QEMU/KVM on that host
+   through an SSH tunnel, system-level.
+
+Q13. Why migrate VMs?
+A. Maintenance without downtime, load balancing, fault
+   tolerance, energy saving.
+
+Q14. What is downtime in live migration?
+A. The very short period (milliseconds) when VM is paused for
+   the final switch over.
+
+Q15. What is post-copy migration?
+A. VM starts on destination first and missing memory pages are
+   fetched on demand. (virsh migrate --postcopy)
+
+Q16. Requirements for live migration?
+A. Same libvirt/QEMU, shared storage, SSH access, network,
+   compatible CPUs.
+
+Q17. Difference between virsh shutdown and destroy?
+A. shutdown = graceful (like pressing power button).
+   destroy = force power off (like pulling the plug).
+
+Q18. What is the XML file of a VM?
+A. VM definition: name, CPU, memory, disk path, network. Seen
+   using virsh dumpxml.
+
+Q19. How is KVM different from VirtualBox?
+A. KVM is in the Linux kernel (Type 1), faster, used in clouds
+   like OpenStack. VirtualBox is a Type 2 desktop tool.
+
+Q20. Where is KVM used in cloud?
+A. OpenStack, Google Cloud, AWS Nitro (KVM-based) and many
+   private clouds.
+
+----------------------------------------------------------
+7. MEMORY TRICKS
+----------------------------------------------------------
+- KVM stack: "K Q L V" = KVM, QEMU, Libvirt, Virsh
+  (Kernel does CPU, Qemu does devices, Libvirt manages,
+  Virsh commands)
+- Prepare for migration in 5 words: HOSTS, SSH, NFS, FIREWALL,
+  VM
+- Live migration steps: Copy memory -> Copy dirty pages ->
+  Pause briefly -> Resume on destination
+- Live = "VM never sleeps". Offline = "VM sleeps, moves, wakes".
+- Check result: virsh list on BOTH hosts.
+
+==========================================================
+END OF EXPERIMENT 4
+==========================================================

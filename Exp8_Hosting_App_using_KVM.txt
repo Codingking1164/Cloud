@@ -1,0 +1,422 @@
+==========================================================
+EXPERIMENT 8: HOSTING AN APPLICATION USING KVM
+==========================================================
+
+----------------------------------------------------------
+1. AIM
+----------------------------------------------------------
+To create a virtual machine using KVM on Ubuntu, deploy a web
+application inside it, and access that application from the host
+(and from other machines).
+
+----------------------------------------------------------
+2. THEORY (learn this)
+----------------------------------------------------------
+VIRTUALIZATION
+  Running many VMs on one physical machine by sharing CPU, RAM,
+  disk and network.
+
+KVM (Kernel-based Virtual Machine)
+  Linux kernel module that turns Linux into a Type 1 hypervisor.
+  Needs Intel VT-x or AMD-V.
+
+KVM STACK
+  KVM     = kernel module (CPU + memory virtualization)
+  QEMU    = hardware emulation (disk, network, display)
+  libvirt = management API and daemon (libvirtd)
+  virsh   = CLI tool, virt-install = create VMs, virt-manager =
+            GUI tool
+
+VM NETWORKING IN KVM
+  NAT (default network "default", virbr0)
+    VM gets IP like 192.168.122.x, can reach internet, but is
+    reachable only from the host. Simple, no setup.
+  BRIDGED (br0)
+    VM gets an IP in the same LAN as the host. Reachable from
+    other machines.
+
+HOSTING AN APP IN A VM
+  Host machine = physical server running KVM.
+  Guest VM = server (Ubuntu) inside, with a web server (Nginx/
+  Apache) and the app. Users reach the app by the VM's IP or by
+  port forwarding from the host.
+
+WHY HOST APPS IN VMs
+  Isolation, better hardware utilization, easy backup and
+  migration, run different OSs on one machine, base of IaaS cloud.
+
+CLOUD-INIT
+  Tool that configures a cloud VM image at first boot (user,
+  password, packages, commands). Used by AWS, OpenStack, etc.
+
+CLOUD IMAGE
+  Small ready-made OS disk image (no installation needed).
+
+----------------------------------------------------------
+3. DIAGRAM (draw this)
+----------------------------------------------------------
+
+      User / Browser
+            |
+            v
+   +---------------------------------------------+
+   |  PHYSICAL HOST (Ubuntu + KVM + libvirt)     |
+   |                                             |
+   |   virbr0 (NAT bridge 192.168.122.1)         |
+   |        |                                    |
+   |   +----+-----------------------+            |
+   |   |  VM: webvm                 |            |
+   |   |  IP 192.168.122.x          |            |
+   |   |  Ubuntu + Nginx + App      |            |
+   |   +----------------------------+            |
+   +---------------------------------------------+
+
+==========================================================
+PART A: INSTALL KVM
+==========================================================
+
+STEP 1: Check CPU support
+    egrep -c '(vmx|svm)' /proc/cpuinfo
+  Expected: number greater than 0.
+
+STEP 2: Check KVM
+    sudo apt update
+    sudo apt install -y cpu-checker
+    kvm-ok
+  Expected: "KVM acceleration can be used"
+  (If hosts are VMs, enable nested virtualization.)
+
+STEP 3: Install KVM and tools
+    sudo apt install -y qemu-kvm libvirt-daemon-system libvirt-clients bridge-utils virtinst cloud-image-utils
+  Optional GUI: sudo apt install -y virt-manager
+
+STEP 4: Add user to groups
+    sudo usermod -aG libvirt,kvm $USER
+    newgrp libvirt
+
+STEP 5: Start libvirt and verify
+    sudo systemctl enable --now libvirtd
+    sudo systemctl status libvirtd
+    virsh list --all
+    virsh net-list --all
+  Expected: libvirtd active (running); network "default" active.
+  If default network is inactive:
+    virsh net-start default
+    virsh net-autostart default
+
+==========================================================
+PART B: CREATE THE VM  (Option 1 = fast cloud image,
+                         Option 2 = install from ISO)
+==========================================================
+
+----------------------------------------------------------
+OPTION 1 (RECOMMENDED): CLOUD IMAGE + CLOUD-INIT
+----------------------------------------------------------
+
+STEP 1: Download Ubuntu cloud image (needs internet, ~600 MB)
+    cd ~
+    wget https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img
+
+STEP 2: Make a disk for the VM and enlarge it
+    sudo cp jammy-server-cloudimg-amd64.img /var/lib/libvirt/images/webvm.qcow2
+    sudo qemu-img resize /var/lib/libvirt/images/webvm.qcow2 10G
+
+STEP 3: Write cloud-init config (user, password, web server)
+    nano user-data.yaml
+  Paste (spaces matter, do not use tabs):
+    #cloud-config
+    hostname: webvm
+    ssh_pwauth: true
+    users:
+      - name: ubuntu
+        sudo: ALL=(ALL) NOPASSWD:ALL
+        shell: /bin/bash
+        lock_passwd: false
+        plain_text_passwd: 'ubuntu123'
+    packages:
+      - nginx
+    runcmd:
+      - echo "<h1>My App is hosted on a KVM Virtual Machine</h1>" > /var/www/html/index.html
+      - systemctl enable --now nginx
+
+STEP 4: Build the seed image that holds this config
+    sudo cloud-localds /var/lib/libvirt/images/seed.img user-data.yaml
+
+STEP 5: Create and start the VM
+    sudo virt-install --name webvm --memory 1024 --vcpus 1 \
+      --disk path=/var/lib/libvirt/images/webvm.qcow2,format=qcow2 \
+      --disk path=/var/lib/libvirt/images/seed.img,device=cdrom \
+      --import --os-variant ubuntu22.04 \
+      --network network=default --graphics none --noautoconsole
+  (If "os-variant not found": use --os-variant generic)
+
+STEP 6: Check VM state
+    virsh list --all
+  Expected: webvm   running
+
+STEP 7: Get the VM IP address (wait 1-2 minutes after start)
+    virsh domifaddr webvm
+    (or)  virsh net-dhcp-leases default
+  Expected: an address like 192.168.122.xx. Note it.
+
+STEP 8: Login to the VM
+    ssh ubuntu@192.168.122.xx
+  Password: ubuntu123
+  (Or console: virsh console webvm   exit with Ctrl+])
+  Note: first boot installs nginx, so wait 2-3 minutes if the web
+  page is not ready.
+
+----------------------------------------------------------
+OPTION 2: INSTALL FROM ISO (if you have the ISO file)
+----------------------------------------------------------
+STEP 1: Create the VM with installer
+    sudo virt-install --name webvm --memory 2048 --vcpus 2 \
+      --disk size=15 --cdrom /path/to/ubuntu-22.04-live-server-amd64.iso \
+      --os-variant ubuntu22.04 --network network=default
+  (A window opens to install Ubuntu Server: select language,
+  keyboard, network, storage, create user, tick "Install OpenSSH
+  server", finish, reboot.)
+  Or use the GUI:  virt-manager  ->  Create new VM -> Local
+  install media -> choose ISO -> RAM/CPU -> disk size -> Finish.
+
+STEP 2: After install, find the IP and login:
+    virsh domifaddr webvm
+    ssh <username>@<vm-ip>
+
+==========================================================
+PART C: DEPLOY THE APPLICATION INSIDE THE VM
+==========================================================
+(Run these inside the VM after ssh login.)
+
+STEP 1: Update and install Nginx (skip if cloud-init did it)
+    sudo apt update
+    sudo apt install -y nginx
+    sudo systemctl enable --now nginx
+    systemctl status nginx
+
+STEP 2: Create your web application page
+    sudo nano /var/www/html/index.html
+  Paste:
+    <!DOCTYPE html>
+    <html>
+    <head><title>KVM Hosted App</title></head>
+    <body style="font-family:Arial;text-align:center;margin-top:60px">
+      <h1>Hello from my KVM Virtual Machine!</h1>
+      <p>This web application is hosted inside a VM created with
+         KVM.</p>
+    </body>
+    </html>
+
+STEP 3: Test inside the VM
+    curl http://localhost
+  Expected: the HTML you wrote.
+
+STEP 4: (OPTIONAL) Host a dynamic app (Python Flask) instead
+    sudo apt install -y python3-flask
+    mkdir ~/app && cd ~/app
+    nano app.py
+  Paste:
+    from flask import Flask
+    app = Flask(__name__)
+    @app.route("/")
+    def home():
+        return "<h1>Flask app running inside KVM VM</h1>"
+    app.run(host="0.0.0.0", port=5000)
+  Run:
+    python3 app.py
+  It is reachable at  http://<vm-ip>:5000  (keep it running in this
+  terminal; use another terminal to test).
+
+STEP 5: Leave the VM
+    exit
+
+==========================================================
+PART D: ACCESS THE APP FROM THE HOST
+==========================================================
+On the HOST machine (not inside the VM):
+
+    curl http://192.168.122.xx
+  Expected: your page.
+  Or open the browser on the host: http://192.168.122.xx
+  (Flask app: http://192.168.122.xx:5000)
+
+  The VM is on the NAT network, so it is reachable from the host
+  only. To let OTHER computers reach it, use Part E.
+
+==========================================================
+PART E: ACCESS FROM OTHER MACHINES (PORT FORWARDING, OPTIONAL)
+==========================================================
+Forward host port 8080 to the VM's port 80.
+Replace 192.168.122.xx with your VM IP and eth0 with your host
+interface (ip a).
+
+    sudo sysctl -w net.ipv4.ip_forward=1
+    sudo iptables -t nat -A PREROUTING -i eth0 -p tcp --dport 8080 -j DNAT --to-destination 192.168.122.xx:80
+    sudo iptables -I FORWARD -d 192.168.122.xx -p tcp --dport 80 -j ACCEPT
+
+From another computer on the same LAN:
+    http://<HOST-IP>:8080
+(The host's own firewall must allow 8080:  sudo ufw allow 8080)
+(Simple alternative for the lab: use a bridged network, see
+ below.)
+
+BRIDGED NETWORK ALTERNATIVE (VM gets a LAN IP)
+  Create the bridge br0 with netplan (like Xen experiment, bridge
+  over your interface), then create the VM with:
+    --network bridge=br0
+  The VM then has an IP in your LAN and every machine can open
+  http://<vm-ip>.
+
+==========================================================
+PART F: MANAGE THE VM (cheat sheet)
+==========================================================
+virsh list --all          all VMs and state
+virsh start webvm         start VM
+virsh shutdown webvm      graceful shutdown
+virsh destroy webvm       force power off
+virsh reboot webvm        reboot
+virsh suspend webvm       pause
+virsh resume webvm        resume
+virsh console webvm       console (exit Ctrl+])
+virsh dominfo webvm       CPU, memory info
+virsh domifaddr webvm     show VM IP
+virsh dumpxml webvm       show config
+virsh autostart webvm     auto start at host boot
+virsh snapshot-create-as webvm snap1   take snapshot
+virsh undefine webvm --remove-all-storage   delete VM completely
+
+----------------------------------------------------------
+4. COMMON ERRORS AND QUICK FIXES
+----------------------------------------------------------
+- kvm-ok: KVM acceleration can NOT be used
+    -> Enable VT-x/AMD-V in BIOS or nested virtualization.
+- virsh: permission denied / cannot connect to libvirt
+    -> sudo systemctl start libvirtd, add user to libvirt group,
+       or use sudo virsh.
+- network 'default' is not active
+    -> virsh net-start default
+- virt-install: os-variant not found
+    -> use --os-variant generic
+- virsh domifaddr shows nothing
+    -> VM still booting. Wait 1-2 minutes, then retry, or use
+       virsh net-dhcp-leases default.
+- ssh: connection refused to VM
+    -> VM not ready yet, or openssh-server not installed.
+- Cannot login with ubuntu/ubuntu123
+    -> cloud-init failed (YAML indentation / seed image). Redo the
+       VM: virsh destroy webvm; virsh undefine webvm; fix
+       user-data.yaml; rebuild seed.img; create again.
+- Web page not opening from host
+    -> Nginx not running in VM: sudo systemctl start nginx.
+       Check IP, test curl inside VM first.
+- Page not reachable from another computer
+    -> NAT network is host-only. Use port forwarding (Part E) or a
+       bridged network, and allow the port in the firewall.
+- Disk permission error when creating VM
+    -> Use sudo with virt-install and put images in
+       /var/lib/libvirt/images.
+
+----------------------------------------------------------
+5. ORAL: 30 SECOND SCRIPT (speak this)
+----------------------------------------------------------
+"In this experiment I hosted a web application on a virtual
+machine created with KVM on Ubuntu. I installed KVM, QEMU and
+libvirt and checked that hardware virtualization is enabled. Then
+I created an Ubuntu VM using virt-install with a cloud image. The
+VM got an IP from the libvirt NAT network. I logged into the VM
+using SSH, installed Nginx and deployed my web page. From the host
+I opened the VM's IP in the browser and the application was
+served. This shows how IaaS works: the physical server is divided
+into isolated VMs, and each VM can host its own application."
+
+----------------------------------------------------------
+6. LIKELY VIVA QUESTIONS WITH SHORT ANSWERS
+----------------------------------------------------------
+Q1. What is KVM?
+A. Kernel-based Virtual Machine: a Linux kernel module that turns
+   Linux into a Type 1 hypervisor. Needs Intel VT-x or AMD-V.
+
+Q2. Role of QEMU, libvirt, virsh?
+A. QEMU emulates devices, libvirt manages VMs (API/daemon), virsh
+   is the command line tool of libvirt.
+
+Q3. What is a hypervisor and its types?
+A. Software that creates and runs VMs. Type 1 bare metal (KVM,
+   Xen, ESXi), Type 2 hosted (VirtualBox).
+
+Q4. What is virt-install?
+A. Command to create a new VM from the CLI.
+
+Q5. What is virt-manager?
+A. GUI tool to create and manage KVM VMs.
+
+Q6. What is the default libvirt network?
+A. NAT network called "default" with bridge virbr0, subnet
+   192.168.122.0/24, DHCP provided by dnsmasq.
+
+Q7. NAT vs bridged networking?
+A. NAT: VM hidden behind host, reachable only from host, can go
+   out to internet. Bridged: VM sits in the same LAN as host with
+   its own LAN IP, reachable by all.
+
+Q8. How do you find the VM IP?
+A. virsh domifaddr vmname or virsh net-dhcp-leases default.
+
+Q9. What is a qcow2 image?
+A. QEMU Copy-On-Write disk format. Supports snapshots, thin
+   provisioning and compression.
+
+Q10. What is cloud-init?
+A. Tool that auto-configures a cloud VM on first boot (user,
+   packages, commands).
+
+Q11. What is a cloud image?
+A. A small pre-installed OS disk image ready to boot, used instead
+   of installing from an ISO.
+
+Q12. Difference between virsh shutdown and destroy?
+A. shutdown = graceful. destroy = force power off.
+
+Q13. What is a snapshot?
+A. Saved state of a VM at a point in time, to roll back later.
+
+Q14. What is an XML file of VM?
+A. Definition of VM (CPU, memory, disk, network). virsh dumpxml.
+
+Q15. How is KVM related to the cloud?
+A. KVM is used by OpenStack, Google Cloud and others to provide
+   IaaS (VMs on demand).
+
+Q16. Advantages of hosting apps in VMs?
+A. Isolation, security, better hardware use, easy backup,
+   migration and scaling.
+
+Q17. VM vs container?
+A. VM has its own OS kernel, heavier, stronger isolation.
+   Container shares host kernel, lighter, faster.
+
+Q18. How can other computers access an app in a NAT VM?
+A. Port forwarding (iptables DNAT) from a host port to the VM, or
+   use bridged networking.
+
+Q19. How to start the VM automatically at host boot?
+A. virsh autostart vmname.
+
+Q20. What is the use of Nginx here?
+A. Web server inside the VM that serves the application to
+   clients over HTTP.
+
+----------------------------------------------------------
+7. MEMORY TRICKS
+----------------------------------------------------------
+- Flow: INSTALL KVM -> CREATE VM -> LOGIN -> INSTALL WEB SERVER
+  -> DEPLOY APP -> ACCESS BY IP
+- KVM stack: K Q L V = KVM, QEMU, Libvirt, Virsh
+- NAT = hidden behind host (192.168.122.x). Bridge = visible in
+  LAN.
+- 4 commands: virt-install, virsh list, virsh domifaddr, ssh
+- Verify success with:  curl http://VM-IP
+
+==========================================================
+END OF EXPERIMENT 8
+==========================================================
