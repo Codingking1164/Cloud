@@ -1,0 +1,645 @@
+﻿Experiment: Load Balancer Using HAProxy in Ubuntu 
+
+Complete practical procedure 
+
+Single Ubuntu machine 
+
+Below is the complete experiment from beginning to end. You can copy the entire response into 
+your Word document and follow it during your practical examination. 
+
+We will create two backend web servers on one Ubuntu machine and use HAProxy as the load 
+balancer. 
+
+1. Aim 
+
+To implement a load balancer using HAProxy in Ubuntu and distribute incoming client requests 
+among multiple backend servers using the Round Robin algorithm. 
+
+2. Objectives 
+
+1. To install HAProxy in Ubuntu. 
+
+2. To create two backend web servers. 
+
+3. To configure HAProxy as a load balancer. 
+
+4. To distribute client requests among backend servers. 
+
+5. To test load balancing functionality. 
+
+3. Requirements 
+
+• Ubuntu operating system 
+
+• Internet connection 
+
+• Terminal 
+
+• HAProxy 
+
+• Python 3 
+
+• Web browser 
+
+4. Architecture 
+
+Client / Browser 
+
+http://localhost 
+
+HAProxy Load Balancer 
+
+Port 80 
+
+Round Robin Algorithm 
+
+Backend Server 1 
+
+8081 
+
+SERVER 1 
+
+
+
+Backend Server 2 
+
+8082 
+
+SERVER 2 
+
+Working: The client sends a request to HAProxy. HAProxy forwards requests alternately to Server 1 
+and Server 2 using Round Robin scheduling. 
+
+5. Procedure 
+
+Step 1: Update Ubuntu 
+
+Command 1: 
+
+sudo apt update 
+
+Explanation: Updates the package lists of Ubuntu. 
+
+Command 2: 
+
+sudo apt upgrade -y 
+
+Explanation: Installs available software updates. 
+
+Step 2: Install HAProxy 
+
+Command: 
+
+sudo apt install haproxy -y 
+
+Explanation: Installs the HAProxy load-balancing software. 
+
+Check installation: 
+
+haproxy -v 
+
+Expected output: HAProxy version information. 
+
+Step 3: Check Python installation 
+
+Python will be used to create two simple web servers. 
+
+python3 --version 
+
+If Python is not installed, execute: 
+
+sudo apt install python3 -y 
+
+Step 4: Create Backend Server 1 
+
+Create a directory for Server 1. 
+
+mkdir -p ~/server1 
+
+Move into the directory: 
+
+cd ~/server1 
+
+Create an HTML file: 
+
+
+
+nano index.html 
+
+Write the following HTML code: 
+
+<html> 
+
+<head> 
+
+    <title>Server 1</title> 
+
+</head> 
+
+<body> 
+
+    <h1>Welcome to Backend Server 1</h1> 
+
+    <h2>Response from Server 1</h2> 
+
+</body> 
+
+</html> 
+
+Save the file: 
+
+• Press Ctrl + O. 
+
+• Press Enter. 
+
+• Press Ctrl + X. 
+
+Start Server 1: 
+
+python3 -m http.server 8081 
+
+Explanation: 
+
+• python3 runs Python. 
+
+• -m http.server starts a simple HTTP server. 
+
+• 8081 specifies the port number. 
+
+Server 1 running on port 8081 
+
+Important: Keep this terminal open. 
+
+Step 5: Create Backend Server 2 
+
+Open another terminal using Ctrl + Alt + T. 
+
+Create a directory: 
+
+mkdir -p ~/server2 
+
+Move into it: 
+
+cd ~/server2 
+
+Create an HTML file: 
+
+nano index.html 
+
+
+
+Write the following HTML code: 
+
+<html> 
+
+<head> 
+
+    <title>Server 2</title> 
+
+</head> 
+
+<body> 
+
+    <h1>Welcome to Backend Server 2</h1> 
+
+    <h2>Response from Server 2</h2> 
+
+</body> 
+
+</html> 
+
+Save the file: 
+
+• Press Ctrl + O. 
+
+• Press Enter. 
+
+• Press Ctrl + X. 
+
+Start Server 2: 
+
+python3 -m http.server 8082 
+
+Server 2 running on port 8082 
+
+Important: Keep this terminal open too. 
+
+Step 6: Test Both Backend Servers 
+
+Open a third terminal. 
+
+Test Server 1: 
+
+curl http://localhost:8081 
+
+Expected output contains: 
+
+<h1>Welcome to Backend Server 1</h1> 
+
+Test Server 2: 
+
+curl http://localhost:8082 
+
+Expected output contains: 
+
+<h1>Welcome to Backend Server 2</h1> 
+
+Explanation: These commands verify that both backend servers are working properly before 
+configuring HAProxy. 
+
+Step 7: Configure HAProxy 
+
+
+
+Open the HAProxy configuration file: 
+
+sudo nano /etc/haproxy/haproxy.cfg 
+
+Go to the bottom of the file and add the following configuration. 
+
+HAProxy configuration code: 
+
+frontend http_front 
+
+    bind *:80 
+
+    default_backend web_servers 
+
+ 
+
+backend web_servers 
+
+    balance roundrobin 
+
+    server server1 127.0.0.1:8081 check 
+
+    server server2 127.0.0.1:8082 check 
+
+Save the file: 
+
+• Press Ctrl + O. 
+
+• Press Enter. 
+
+• Press Ctrl + X. 
+
+Explanation of configuration: 
+
+Configuration Meaning 
+
+frontend http_front Defines the frontend 
+
+bind *:80 Listens on port 80 
+
+default_backend Specifies backend servers 
+
+backend web_servers Defines backend group 
+
+balance roundrobin Uses Round Robin algorithm 
+
+server server1 Defines first server 
+
+server server2 Defines second server 
+
+check Enables server health checks 
+
+Important: The check option allows HAProxy to monitor backend server availability. 
+
+Step 8: Validate HAProxy Configuration 
+
+Before starting HAProxy, check the configuration for errors. 
+
+sudo haproxy -c -f /etc/haproxy/haproxy.cfg 
+
+
+
+Expected output: 
+
+Configuration file is valid 
+
+If the configuration is invalid, check the configuration file and correct the errors. 
+
+Step 9: Restart HAProxy 
+
+Execute: 
+
+sudo systemctl restart haproxy 
+
+Enable HAProxy to start automatically during system boot: 
+
+sudo systemctl enable haproxy 
+
+Check HAProxy status: 
+
+sudo systemctl status haproxy 
+
+Expected output: 
+
+Active: active (running) 
+
+Press q to exit the status screen. 
+
+Step 10: Test Load Balancing 
+
+Now HAProxy is configured to distribute requests between both backend servers. 
+
+Execute: 
+
+curl http://localhost 
+
+The first response may contain: 
+
+Welcome to Backend Server 1 
+
+Execute again: 
+
+curl http://localhost 
+
+The next response should contain: 
+
+Welcome to Backend Server 2 
+
+Repeat the command several times: 
+
+for i in {1..6}; do 
+
+    curl -s http://localhost | grep "Welcome to Backend" 
+
+done 
+
+Expected result (assuming both servers are healthy and the requests are handled in order): 
+
+Welcome to Backend Server 1 
+
+Welcome to Backend Server 2 
+
+Welcome to Backend Server 1 
+
+
+
+Welcome to Backend Server 2 
+
+Welcome to Backend Server 1 
+
+Welcome to Backend Server 2 
+
+Load balancing successfully demonstrated 
+
+Explanation: HAProxy distributes requests between the two backend servers using the Round 
+Robin algorithm. 
+
+6. Additional Verification 
+
+Step 11: Check HAProxy Logs 
+
+To monitor HAProxy service logs, execute: 
+
+sudo journalctl -u haproxy -f 
+
+This displays real-time HAProxy logs. 
+
+Press Ctrl + C to exit. 
+
+Step 12: Test Server Failure 
+
+We can test whether HAProxy detects a failed backend server. 
+
+1. Go to the terminal running Server 1. 
+
+2. Press Ctrl + C to stop Server 1. 
+
+3. Execute: 
+
+curl http://localhost 
+
+HAProxy should now forward the request to Server 2 because Server 1 is unavailable. 
+
+Restart Server 1: 
+
+cd ~/server1 
+
+python3 -m http.server 8081 
+
+HAProxy will detect Server 1 again through health checks. 
+
+7. Troubleshooting 
+
+Problem Solution 
+
+HAProxy installation failed Run sudo apt update 
+
+Port 80 already in use Check using sudo ss -ltnp 
+
+Server 1 not responding Check whether port 8081 is running 
+
+Server 2 not responding Check whether port 8082 is running 
+
+HAProxy configuration error Run configuration validation command 
+
+
+
+HAProxy not starting Check sudo journalctl -u haproxy -n 50 
+
+Important configuration note: Ubuntu's default HAProxy configuration may already contain an 
+active frontend listening on port 80. To avoid duplicate port bindings, replace the entire existing 
+configuration file with this complete configuration rather than simply appending another frontend. 
+
+sudo tee /etc/haproxy/haproxy.cfg > /dev/null <<'EOF' 
+
+global 
+
+    log /dev/log local0 
+
+    log /dev/log local1 notice 
+
+    daemon 
+
+    maxconn 256 
+
+ 
+
+defaults 
+
+    log global 
+
+    mode http 
+
+    option httplog 
+
+    timeout connect 5s 
+
+    timeout client 30s 
+
+    timeout server 30s 
+
+ 
+
+frontend http_front 
+
+    bind *:80 
+
+    default_backend web_servers 
+
+ 
+
+backend web_servers 
+
+    balance roundrobin 
+
+    option httpchk GET / 
+
+    server server1 127.0.0.1:8081 check 
+
+    server server2 127.0.0.1:8082 check 
+
+EOF 
+
+Then validate and restart: 
+
+sudo haproxy -c -f /etc/haproxy/haproxy.cfg 
+
+
+
+sudo systemctl restart haproxy 
+
+Use this complete configuration if you encounter conflicts with the default configuration. 
+
+8. Important HAProxy Commands to Remember 
+
+Command Purpose 
+
+sudo apt update Update package list 
+
+sudo apt install haproxy -y Install HAProxy 
+
+haproxy -v Check HAProxy version 
+
+sudo nano /etc/haproxy/haproxy.cfg Edit configuration 
+
+sudo haproxy -c -f /etc/haproxy/haproxy.cfg Validate configuration 
+
+sudo systemctl start haproxy Start HAProxy 
+
+sudo systemctl stop haproxy Stop HAProxy 
+
+sudo systemctl restart haproxy Restart HAProxy 
+
+sudo systemctl status haproxy Check status 
+
+sudo systemctl enable haproxy Enable at boot 
+
+curl http://localhost Test load balancer 
+
+9. Result 
+
+Thus, the load balancer was successfully implemented using HAProxy in Ubuntu. Two backend web 
+servers were created, and incoming client requests were distributed between them using the 
+Round Robin algorithm. 
+
+10. Viva Questions and Answers 
+
+1. What is a load balancer? 
+
+A load balancer distributes incoming network traffic among multiple servers to improve 
+performance and availability. 
+
+2. What is HAProxy? 
+
+HAProxy stands for High Availability Proxy. It is open-source software used for load balancing and 
+proxying TCP and HTTP traffic. 
+
+3. What is the purpose of HAProxy? 
+
+It distributes client requests among multiple backend servers and prevents a single server from 
+becoming overloaded. 
+
+4. What is Round Robin? 
+
+
+
+Round Robin is a load-balancing algorithm that distributes requests sequentially among available 
+servers. 
+
+5. What is a frontend in HAProxy? 
+
+Frontend is the component that receives incoming client connections. 
+
+6. What is a backend? 
+
+Backend is a group of servers that process client requests forwarded by HAProxy. 
+
+7. What is a health check? 
+
+A health check verifies whether a backend server is available and responding. 
+
+8. What is port 80? 
+
+Port 80 is the default port used for HTTP communication. 
+
+9. What is the use of the curl command? 
+
+It sends HTTP requests and displays the server response through the terminal. 
+
+10. What happens if one backend server fails? 
+
+HAProxy detects the failure through health checks and forwards requests to the remaining healthy 
+servers. 
+
+11. What are other load-balancing algorithms? 
+
+• Round Robin 
+
+• Least Connections 
+
+• Source IP 
+
+12. What is the difference between frontend and backend? 
+
+Frontend receives client requests, whereas backend processes the requests through configured 
+servers. 
+
+11. Quick Memory Trick for Practical Examination 
+
+Remember this sequence: 
+
+I – I – C – S – S – T 
+
+1. I – Install HAProxy 
+
+2. I – Install/check Python 
+
+3. C – Create two backend servers 
+
+4. S – Start both servers 
+
+5. S – Set up HAProxy configuration 
+
+6. T – Test using curl 
+
+Most important things to remember: 
+
+
+
+• HAProxy default listening port: 80 
+
+• Server 1 port: 8081 
+
+• Server 2 port: 8082 
+
+• Configuration file: /etc/haproxy/haproxy.cfg 
+
+• Algorithm: roundrobin 
+
+• Testing command: curl http://localhost 
+
+• Configuration checking: haproxy -c -f 
+
+Final practical tip: Keep three terminal windows open during the experiment: 
+
+• Terminal 1: Backend Server 1 
+
+• Terminal 2: Backend Server 2 
+
+• Terminal 3: HAProxy configuration, testing and commands 
+
+This makes the experiment much easier to demonstrate in your examination.

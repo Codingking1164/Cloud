@@ -1,0 +1,809 @@
+﻿Experiment: Clustering Using OpenMPI Between Two Ubuntu Machines 
+
+Practical examination guide 
+
+2 Ubuntu PCs 
+
+1. Aim 
+
+To implement a cluster using OpenMPI (Open Message Passing Interface) between two Ubuntu 
+machines and execute a parallel program across both machines. 
+
+2. Requirements 
+
+1. Two computers with Ubuntu installed. 
+
+2. Both computers connected to the same Wi-Fi network or LAN. 
+
+3. Internet connection for installing required packages. 
+
+4. Both computers should be switched ON during execution. 
+
+Machine arrangement 
+
+PC 1 – Master 
+
+Main machine 
+
+Controls execution, compiles the program and starts MPI processes. 
+
+PC 2 – Worker 
+
+Slave machine 
+
+Receives instructions and executes MPI processes. 
+
+OpenMPI Cluster 
+
+Communication using SSH over the network 
+
+3. Understanding the experiment 
+
+What is OpenMPI? 
+
+OpenMPI is an open-source implementation of the Message Passing Interface (MPI). It allows 
+multiple processes running on one or more computers to communicate and execute a program in 
+parallel. 
+
+What is clustering? 
+
+Clustering means connecting two or more computers so that they work together to perform a 
+computational task. 
+
+What is MPI? 
+
+MPI stands for Message Passing Interface. It is a standard that allows processes to exchange data 
+with each other. 
+
+What is the role of each machine? 
+
+
+
+Machine Role 
+
+PC 1 Master – starts and manages execution 
+
+PC 2 Worker – executes assigned processes 
+
+Important: OpenMPI is the software that manages parallel execution. SSH is used to launch 
+processes on the second machine. 
+
+PROCEDURE – STEP BY STEP 
+
+Follow the steps in the given order. I have clearly separated the explanation and commands. 
+
+STEP 1: Connect both Ubuntu machines to the same network 
+
+Explanation: 
+
+Connect both computers to the same Wi-Fi network or LAN. This allows them to communicate with 
+each other. 
+
+On PC 1 (Master): 
+
+COMMAND 
+
+hostname 
+
+On PC 2 (Worker): 
+
+hostname 
+
+You can identify which computer is master and which is worker. 
+
+STEP 2: Find the IP addresses of both machines 
+
+Explanation: 
+
+Each computer has a unique IP address on the local network. We need these addresses to establish 
+communication. 
+
+On PC 1 (Master): 
+
+COMMAND 
+
+hostname -I 
+
+Example output: 
+
+192.168.1.10 
+
+On PC 2 (Worker): 
+
+hostname -I 
+
+Example output: 
+
+192.168.1.11 
+
+Example network configuration 
+
+
+
+Machine IP address 
+
+Master 192.168.1.10 
+
+Worker 192.168.1.11 
+
+These are example IPs. Always use the actual IP addresses displayed on your computers. 
+
+STEP 3: Test communication between both machines 
+
+Explanation: 
+
+The ping command checks whether two computers can communicate over the network. 
+
+On PC 1 (Master): 
+
+ping -c 4 192.168.1.11 
+
+Replace the IP with the actual worker IP. 
+
+Expected output: 
+
+64 bytes from 192.168.1.11 
+
+64 bytes from 192.168.1.11 
+
+64 bytes from 192.168.1.11 
+
+64 bytes from 192.168.1.11 
+
+On PC 2 (Worker): 
+
+ping -c 4 192.168.1.10 
+
+If both computers receive replies, network communication is working. 
+
+STEP 4: Install OpenMPI and SSH 
+
+Explanation: 
+
+We need to install three important packages: 
+
+Package Purpose 
+
+openmpi-bin Provides MPI execution commands 
+
+libopenmpi-dev Provides MPI development libraries and headers 
+
+openssh-server Allows remote access using SSH 
+
+build-essential Provides compiler tools 
+
+On BOTH PC 1 and PC 2: 
+
+Run the following commands separately on both computers. 
+
+COMMAND 1 – UPDATE UBUNTU 
+
+sudo apt update 
+
+
+
+COMMAND 2 – INSTALL REQUIRED PACKAGES 
+
+sudo apt install openmpi-bin libopenmpi-dev openssh-server build-essential -y 
+
+COMMAND 3 – START SSH SERVICE 
+
+sudo systemctl enable --now ssh 
+
+COMMAND 4 – CHECK SSH STATUS 
+
+sudo systemctl status ssh 
+
+Expected result: 
+
+Active: active (running) 
+
+Press q to exit the status screen. 
+
+STEP 5: Verify OpenMPI installation 
+
+Explanation: 
+
+Check whether OpenMPI is successfully installed on both computers. 
+
+On BOTH machines: 
+
+mpirun --version 
+
+mpicc --version 
+
+Expected result: 
+
+You should see the OpenMPI version and GCC compiler version. 
+
+STEP 6: Configure passwordless SSH 
+
+Explanation: 
+
+OpenMPI uses SSH to launch processes on the worker machine. 
+
+Passwordless SSH allows the master computer to connect to the worker without repeatedly entering 
+the password. 
+
+Perform the following commands ONLY on PC 1 (Master). 
+
+Command 1: Generate SSH key 
+
+ssh-keygen -t ed25519 
+
+When asked questions: 
+
+• File location: Press Enter. 
+
+• Passphrase: Press Enter. 
+
+• Confirm passphrase: Press Enter. 
+
+Command 2: Copy public key to worker 
+
+ssh-copy-id username@192.168.1.11 
+
+
+
+Replace: 
+
+• username with the Ubuntu username on PC 2. 
+
+• 192.168.1.11 with the actual worker IP. 
+
+Enter the worker's password when requested. 
+
+Command 3: Test SSH connection 
+
+ssh username@192.168.1.11 
+
+If successful, you will enter the worker's terminal. 
+
+To return to the master computer: 
+
+exit 
+
+Checkpoint 
+
+Master should now be able to connect to worker without entering a password. 
+
+STEP 7: Create a working directory on both computers 
+
+Explanation: 
+
+Create a folder named mpi_lab where we will save the MPI program. 
+
+On PC 1 (Master): 
+
+mkdir -p ~/mpi_lab 
+
+cd ~/mpi_lab 
+
+On PC 2 (Worker): 
+
+mkdir -p ~/mpi_lab 
+
+cd ~/mpi_lab 
+
+STEP 8: Create the hostfile on the master machine 
+
+Explanation: 
+
+A hostfile contains the IP addresses of computers participating in the cluster. 
+
+It also specifies how many MPI processes can run on each computer using the slots parameter. 
+
+On PC 1 (Master) ONLY: 
+
+cd ~/mpi_lab 
+
+nano hosts.txt 
+
+Write the following inside the file: 
+
+192.168.1.10 slots=2 
+
+192.168.1.11 slots=2 
+
+Replace the IP addresses with your actual master and worker IPs. 
+
+
+
+Save the file: 
+
+1. Press Ctrl + O. 
+
+2. Press Enter. 
+
+3. Press Ctrl + X. 
+
+Explanation of hostfile: 
+
+Entry Meaning 
+
+192.168.1.10 Master computer 
+
+192.168.1.11 Worker computer 
+
+slots=2 Allows 2 MPI processes on that computer 
+
+Total available slots = 2 + 2 = 4. 
+
+STEP 9: Create an MPI program 
+
+Explanation: 
+
+Now we will create a simple C program using MPI. 
+
+This program will: 
+
+• Initialize MPI. 
+
+• Identify the rank of each process. 
+
+• Find the total number of processes. 
+
+• Display the computer name on which each process is running. 
+
+• Terminate MPI execution. 
+
+On PC 1 (Master) ONLY: 
+
+cd ~/mpi_lab 
+
+nano hello.c 
+
+Copy the following complete program: 
+
+ 
+
+#include <stdio.h> 
+
+#include <mpi.h> 
+
+ 
+
+int main(int argc, char *argv[]) 
+
+{ 
+
+    int rank, size; 
+
+
+
+    char processor_name[MPI_MAX_PROCESSOR_NAME]; 
+
+    int name_len; 
+
+ 
+
+    MPI_Init(&argc, &argv); 
+
+ 
+
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank); 
+
+ 
+
+    MPI_Comm_size(MPI_COMM_WORLD, &size); 
+
+ 
+
+    MPI_Get_processor_name(processor_name, &name_len); 
+
+ 
+
+    printf("Hello from process %d of %d on %s\n", 
+
+           rank, size, processor_name); 
+
+ 
+
+    MPI_Finalize(); 
+
+ 
+
+    return 0; 
+
+} 
+
+Save the program: 
+
+1. Press Ctrl + O. 
+
+2. Press Enter. 
+
+3. Press Ctrl + X. 
+
+Understanding important MPI functions: 
+
+Function Purpose 
+
+MPI_Init() Initializes MPI environment 
+
+MPI_Comm_rank() Returns process ID (rank) 
+
+MPI_Comm_size() Returns total number of processes 
+
+MPI_Get_processor_name() Returns computer name 
+
+MPI_Finalize() Terminates MPI environment 
+
+MPI_COMM_WORLD Communicator containing all participating processes 
+
+
+
+Important concept: 
+
+• Rank 0 = First process. 
+
+• Rank 1 = Second process. 
+
+• Rank 2 = Third process. 
+
+• Rank 3 = Fourth process. 
+
+Each process gets a unique rank. 
+
+STEP 10: Compile the MPI program 
+
+Explanation: 
+
+We use mpicc to compile the C program with MPI libraries. 
+
+On PC 1 (Master): 
+
+cd ~/mpi_lab 
+
+mpicc hello.c -o hello 
+
+Check whether the executable was created: 
+
+ls 
+
+Expected output: 
+
+hello 
+
+hello.c 
+
+hosts.txt 
+
+Here: 
+
+• hello.c = Source code. 
+
+• hello = Executable program. 
+
+• hosts.txt = Cluster configuration. 
+
+STEP 11: Copy the executable to the worker machine 
+
+Explanation: 
+
+The worker also needs the compiled executable because MPI will launch processes on both 
+computers. 
+
+We use scp (Secure Copy Protocol) to transfer the executable. 
+
+On PC 1 (Master): 
+
+scp ~/mpi_lab/hello username@192.168.1.11:~/mpi_lab/ 
+
+Replace the username and IP with the actual worker details. 
+
+To verify the file on the worker: 
+
+
+
+ssh username@192.168.1.11 "ls ~/mpi_lab" 
+
+Expected output: 
+
+hello 
+
+Both computers must have the executable in the same relative directory. 
+
+STEP 12: Execute the MPI program across both computers 
+
+Explanation: 
+
+Now we execute the program using mpirun. 
+
+The -np option specifies the total number of MPI processes. 
+
+On PC 1 (Master) ONLY: 
+
+cd ~/mpi_lab 
+
+mpirun --hostfile hosts.txt -np 4 ./hello 
+
+Here: 
+
+Command Meaning 
+
+mpirun Starts MPI execution 
+
+--hostfile Specifies participating computers 
+
+hosts.txt File containing machine IP addresses 
+
+-np 4 Starts four MPI processes 
+
+./hello Executes the compiled program 
+
+STEP 13: Observe the output 
+
+Expected output (example): 
+
+Hello from process 0 of 4 on master 
+
+Hello from process 1 of 4 on master 
+
+Hello from process 2 of 4 on worker 
+
+Hello from process 3 of 4 on worker 
+
+Experiment completed 
+
+The exact order of output may differ because processes execute in parallel. 
+
+What does this output prove? 
+
+• Four MPI processes were created. 
+
+• Two computers participated in execution. 
+
+• Every process received a unique rank. 
+
+
+
+• Both computers executed the same MPI program. 
+
+• Communication and remote process launching worked successfully. 
+
+4. Important commands – Quick revision 
+
+Command Use 
+
+hostname Display computer name 
+
+hostname -I Find IP address 
+
+ping IP Test network connectivity 
+
+sudo apt update Update package list 
+
+sudo apt install openmpi-bin libopenmpi-dev -y Install MPI 
+
+sudo systemctl enable --now ssh Enable SSH 
+
+mpirun --version Check MPI version 
+
+ssh-keygen -t ed25519 Generate SSH key 
+
+ssh-copy-id user@IP Copy SSH public key 
+
+ssh user@IP Connect remotely 
+
+scp file user@IP:path Copy file remotely 
+
+nano filename Create/edit a file 
+
+mpicc file.c -o output Compile MPI program 
+
+mpirun -np 4 ./output Run 4 MPI processes 
+
+mpirun --hostfile hosts.txt -np 4 ./hello Run MPI across cluster 
+
+5. Troubleshooting common errors 
+
+Error Reason Solution 
+
+Connection refused SSH is not running sudo systemctl start ssh 
+
+Permission denied SSH authentication problem Repeat ssh-copy-id 
+
+Host unreachable Network problem Check IP and use ping 
+
+Not enough slots Insufficient slots specified Increase slots in hostfile 
+
+Executable not found Program missing on worker Copy executable using scp 
+
+mpicc command not found MPI not installed Install libopenmpi-dev 
+
+
+
+SSH asks for password Key authentication not configured Check SSH public key setup 
+
+If Ubuntu firewall is enabled, allow SSH on both machines: 
+
+sudo ufw allow 22/tcp 
+
+Important: For the easiest setup, use the same Ubuntu username on both machines. If usernames 
+differ, SSH remote-launch configuration needs an additional adjustment. 
+
+6. Alternative execution commands 
+
+To execute only two processes: 
+
+mpirun --hostfile hosts.txt -np 2 ./hello 
+
+To execute four processes, ensuring two processes per machine: 
+
+mpirun --hostfile hosts.txt -np 4 --map-by ppr:2:node ./hello 
+
+To check which machines are configured in the hostfile: 
+
+cat hosts.txt 
+
+7. Result 
+
+Successfully implemented a cluster using OpenMPI between two Ubuntu machines. Configured SSH-
+based communication, compiled an MPI C program and executed multiple processes across both 
+computers. 
+
+8. Important viva questions 
+
+Q1. What is OpenMPI? 
+
+OpenMPI is an open-source implementation of the Message Passing Interface used for parallel 
+computing. 
+
+Q2. What is MPI? 
+
+MPI stands for Message Passing Interface. It allows multiple processes to communicate and exchange 
+data. 
+
+Q3. What is clustering? 
+
+Clustering is the process of connecting multiple computers to work together as a single computing 
+system. 
+
+Q4. What is the role of the master machine? 
+
+It controls and initiates the execution of MPI processes across the cluster. 
+
+Q5. What is the role of the worker machine? 
+
+It executes the processes assigned by the master machine. 
+
+Q6. Why do we use SSH? 
+
+SSH provides secure remote communication between computers. 
+
+Q7. What is a hostfile? 
+
+
+
+A hostfile contains the IP addresses or hostnames of machines participating in MPI execution. 
+
+Q8. What is mpicc? 
+
+It is the MPI C compiler wrapper used to compile MPI-based C programs. 
+
+Q9. What is process rank? 
+
+Rank is the unique identification number assigned to each MPI process, starting from zero. 
+
+Q10. What is MPI_COMM_WORLD? 
+
+It is the default communicator containing all processes participating in the MPI application. 
+
+Q11. What is the purpose of MPI_Init()? 
+
+It initializes the MPI execution environment. 
+
+Q12. What is the purpose of MPI_Finalize()? 
+
+It terminates the MPI execution environment. 
+
+Q13. What does -np 4 mean? 
+
+It specifies that four MPI processes should be started. 
+
+Q14. What is the difference between OpenMP and OpenMPI? 
+
+OpenMP OpenMPI 
+
+Shared-memory parallelism Distributed-memory parallelism 
+
+Generally uses multiple threads Uses multiple processes 
+
+Usually operates within one computer Can operate across multiple computers 
+
+Uses directives such as #pragma omp parallel Uses MPI functions such as MPI_Init() 
+
+9. Tricks to remember the entire practical 
+
+Remember this sequence: 
+
+N – P – I – S – H – C – R 
+
+Seven stages of OpenMPI clustering 
+
+N 
+
+Network 
+
+Connect both PCs and find IP addresses. 
+
+P 
+
+Ping 
+
+Test connectivity. 
+
+I 
+
+
+
+Install 
+
+Install OpenMPI and SSH. 
+
+S 
+
+SSH 
+
+Configure passwordless connection. 
+
+H 
+
+Hostfile 
+
+Add both IP addresses and slots. 
+
+C 
+
+Compile 
+
+Write C program and compile using mpicc. 
+
+R 
+
+Run 
+
+Copy executable and execute using mpirun. 
+
+Three commands you must never forget: 
+
+1. Compile: mpicc hello.c -o hello 
+
+2. Copy: scp hello username@WORKER_IP:~/mpi_lab/ 
+
+3. Execute: mpirun --hostfile hosts.txt -np 4 ./hello 
+
+10. Last-minute practical checklist 
+
+Practical progress 
+
+0/11 completed 
+
+Both Ubuntu computers connected to the same network 
+
+Collected IP addresses of both computers 
+
+Successfully tested ping 
+
+Installed OpenMPI and SSH on both computers 
+
+Started SSH service on both computers 
+
+Configured passwordless SSH 
+
+Created hosts.txt on master 
+
+Created hello.c on master 
+
+Compiled using mpicc 
+
+Copied executable to worker 
+
+
+
+Successfully executed using mpirun 
+
+My exam tip: Remember the order Network → Ping → Install → SSH → Hostfile → Compile → Run. If 
+you remember these seven stages, you can reproduce the entire OpenMPI clustering experiment in 
+your practical examination.
