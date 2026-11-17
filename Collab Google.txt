@@ -1,0 +1,338 @@
+# **YouTube Channel Data Analysis using Python in Google Colab**
+
+We will create a Python program that analyses a particular YouTube channel using the **YouTube Data API v3**.
+
+You don't need to install Python, VS Code, or any software on your computer. Everything will run directly in Google Colab.
+
+
+
+Beginner friendly
+
+Google Colab
+
+Python
+
+
+
+## **1. What will this project analyse?**
+
+The program will collect publicly available data from your selected YouTube channel and perform the following analysis:
+
+| Analysis            | Information obtained          |
+| ------------------- | ----------------------------- |
+| Channel details     | Channel name, ID, description |
+| Subscribers         | Total subscribers             |
+| Total views         | Overall channel views         |
+| Total videos        | Number of uploaded videos     |
+| Video analysis      | Title, views, likes, comments |
+| Most popular videos | Top 10 videos by views        |
+| Engagement rate     | Engagement percentage         |
+| Average views       | Average views per video       |
+| Upload analysis     | Videos uploaded per month     |
+| Visualization       | Bar charts and pie charts     |
+
+At the end, you will also be able to download the collected YouTube data as a CSV file.
+
+## **2. Requirements**
+
+You need only:
+
+1. A Google account.
+2. Internet connection.
+3. A YouTube Data API v3 API key.
+4. Google Colab.
+
+## **3. Generate your YouTube API key**
+
+**STEP 1 — Open Google Cloud Console**
+
+Open:
+
+[Google Cloud Console](https://console.cloud.google.com/?utm_source=chatgpt.com)
+
+**STEP 2 — Create a project**
+
+1. Sign in using your Google account.
+2. Click the project selection dropdown at the top.
+3. Click **New Project**.
+4. Enter the project name:
+
+`YouTube Data Analysis`
+
+5. Click Create.
+6. Select your newly created project.
+
+**STEP 3 — Enable YouTube Data API v3**
+
+Open:
+
+[YouTube Data API v3](https://console.cloud.google.com/apis/library/youtube.googleapis.com?utm_source=chatgpt.com)
+
+1. Make sure your newly created project is selected.
+2. Click Enable.
+
+**STEP 4 — Generate API key**
+
+Open:
+
+[Google Cloud Credentials](https://console.cloud.google.com/apis/credentials?utm_source=chatgpt.com)
+
+1. Click Create Credentials.
+2. Select API Key.
+3. Your API key will be generated.
+4. Copy the API key.
+
+Important
+
+Keep your API key private. Do not upload it to GitHub or share it publicly.
+
+## **4. Open Google Colab**
+
+Open:
+
+[Google Colab – Open Notebook](https://colab.research.google.com/?utm_source=chatgpt.com)
+
+1. Sign in with your Google account.
+2. Click **New Notebook**.
+3. Rename the notebook to `YouTube_Channel_Data_Analysis`.
+4. You will see a code cell.
+5. Copy and run the following code cells one by one using the ▶ button.
+
+## **5. Python implementation**
+
+We will use the following libraries:
+
+- `google-api-python-client` – to fetch YouTube data.
+- `pandas` – to organize data in tables.
+- `matplotlib` – to create graphs.
+- `seaborn` – to create attractive visualizations.
+
+### **Cell 1 – Install required libraries**
+
+Copy this into the first cell and run it.
+
+```
+!pip install -q google-api-python-client pandas matplotlib seaborn
+```
+
+### **Cell 2 – Import libraries and enter API key**
+
+Important: Enter your API key here
+
+In the code below, replace `PASTE_YOUR_API_KEY_HERE` with the API key you generated in Step 3.
+
+```
+import pandas as pdimport matplotlib.pyplot as pltimport seaborn as snsimport refrom datetime import datetimefrom googleapiclient.discovery import build# ==========================================# ENTER YOUR YOUTUBE API KEY HERE# ==========================================API_KEY = "PASTE_YOUR_API_KEY_HERE"# Create YouTube API connectionyoutube = build(    "youtube",    "v3",    developerKey=API_KEY)print("YouTube API connected successfully!")
+```
+
+**Example:**
+
+```
+API_KEY = "AIzaSyXXXXXXXXXXXXXXXXXXXXXXXX"
+```
+
+Use your actual key, not the example above.
+
+### **Cell 3 – Enter the YouTube channel address**
+
+Important: Enter your channel URL here
+
+You can enter either the channel URL or its channel ID.
+
+```
+# ==========================================# ENTER YOUTUBE CHANNEL ADDRESS HERE# ==========================================CHANNEL_URL = "https://www.youtube.com/@GoogleDevelopers"# Maximum number of videos to analyseMAX_VIDEOS = 200print("Channel URL:", CHANNEL_URL)
+```
+
+For example, if you want to analyse another channel, replace the URL:
+
+```
+CHANNEL_URL = "https://www.youtube.com/@MrBeast"
+```
+
+You can also use a channel ID:
+
+```
+CHANNEL_URL = "UC_x5XG1OV2P6uZZ5FSM9Ttw"
+```
+
+### **Cell 4 – Extract channel ID and fetch channel details**
+
+This code identifies the channel and retrieves its basic information.
+
+```
+def get_channel_id(channel_url):    channel_url = channel_url.strip()    # Direct channel ID    if channel_url.startswith("UC") and "/" not in channel_url:        return channel_url    # Extract @handle from URL or direct handle    match = re.search(r"@([A-Za-z0-9._-]+)", channel_url)    if match:        handle = "@" + match.group(1)        response = youtube.channels().list(            part="snippet,statistics,contentDetails",            forHandle=handle        ).execute()    else:        raise ValueError(            "Please enter a valid @handle URL or UC channel ID."        )    if not response.get("items"):        raise ValueError("Channel not found!")    return response["items"][0]["id"]# Get channel IDchannel_id = get_channel_id(CHANNEL_URL)# Fetch channel detailschannel_response = youtube.channels().list(    part="snippet,statistics,contentDetails",    id=channel_id).execute()channel = channel_response["items"][0]# Extract informationchannel_name = channel["snippet"]["title"]description = channel["snippet"]["description"]stats = channel["statistics"]subscribers = int(stats.get("subscriberCount", 0))total_views = int(stats.get("viewCount", 0))total_videos = int(stats.get("videoCount", 0))uploads_playlist = channel["contentDetails"]["relatedPlaylists"]["uploads"]print("\n========== CHANNEL DETAILS ==========")print("Channel Name:", channel_name)print("Channel ID:", channel_id)print("Subscribers:", subscribers)print("Total Views:", total_views)print("Total Videos:", total_videos)print("Description:", description[:300])
+```
+
+### **Cell 5 – Fetch all uploaded videos**
+
+This is the main data collection part.
+
+It retrieves video information from the channel's uploads playlist.
+
+```
+video_ids = []next_page_token = Nonewhile True:    request = youtube.playlistItems().list(        part="contentDetails",        playlistId=uploads_playlist,        maxResults=50,        pageToken=next_page_token    )    response = request.execute()    for item in response.get("items", []):        video_id = item["contentDetails"]["videoId"]        video_ids.append(video_id)        if len(video_ids) >= MAX_VIDEOS:            break    if len(video_ids) >= MAX_VIDEOS:        video_ids = video_ids[:MAX_VIDEOS]        break    next_page_token = response.get("nextPageToken")    if not next_page_token:        breakprint("Total videos collected:", len(video_ids))
+```
+
+### **Cell 6 – Extract views, likes, comments and other details**
+
+Now we will retrieve detailed information for each collected video.
+
+```
+video_data = []# YouTube API accepts up to 50 video IDs per requestfor i in range(0, len(video_ids), 50):    batch = video_ids[i:i+50]    response = youtube.videos().list(        part="snippet,statistics,contentDetails",        id=",".join(batch)    ).execute()    for video in response.get("items", []):        snippet = video["snippet"]        statistics = video.get("statistics", {})        content = video.get("contentDetails", {})        views = int(statistics.get("viewCount", 0))        likes = int(statistics.get("likeCount", 0))        comments = int(statistics.get("commentCount", 0))        video_data.append({            "Video ID": video["id"],            "Title": snippet["title"],            "Published Date": snippet["publishedAt"],            "Views": views,            "Likes": likes,            "Comments": comments,
+```
+
+### **Cell 7 – Create the dataset**
+
+We will convert the collected information into a Pandas DataFrame.
+
+```
+df = pd.DataFrame(video_data)# Convert date into datetime formatdf["Published Date"] = pd.to_datetime(    df["Published Date"],    utc=True)# Sort videos by viewsdf = df.sort_values(    by="Views",    ascending=False)print("\n========== YOUTUBE VIDEO DATA ==========")display(df.head(10))print("\nDataset Shape:", df.shape)print("\nDataset Information:")print(df.info())
+```
+
+### **Cell 8 – Analyse the channel's performance**
+
+This cell calculates important statistics from the collected videos.
+
+```
+print("\n========== CHANNEL PERFORMANCE ANALYSIS ==========")print("Channel Name:", channel_name)print("Videos Analysed:", len(df))print("Total Views of Analysed Videos:", df["Views"].sum())print("Average Views per Video:", round(df["Views"].mean(), 2))print("Average Likes per Video:", round(df["Likes"].mean(), 2))print("Average Comments per Video:", round(df["Comments"].mean(), 2))print("Average Engagement Rate:",      round(df["Engagement Rate"].mean(), 2), "%")print("\nMost Viewed Video:")print(df.iloc[0]["Title"])print("\nMaximum Views:",      df.iloc[0]["Views"])print("\nMost Liked Video:")print(df.loc[df["Likes"].idxmax()]["Title"])
+```
+
+### **Cell 9 – Find the top 10 most popular videos**
+
+This identifies which videos have received the highest number of views.
+
+```
+top_10 = df.nlargest(10, "Views")print("========== TOP 10 VIDEOS ==========")display(    top_10[["Title", "Views", "Likes", "Comments"]])plt.figure(figsize=(12, 7))sns.barplot(    data=top_10,    x="Views",    y="Title")plt.title("Top 10 Most Viewed YouTube Videos")plt.xlabel("Number of Views")plt.ylabel("Video Title")plt.tight_layout()plt.show()
+```
+
+### **Cell 10 – Analyse likes and comments**
+
+This graph compares the likes and comments received by different videos.
+
+```
+top_videos = df.head(10)plt.figure(figsize=(12, 6))x = range(len(top_videos))plt.bar(    x,    top_videos["Likes"],    label="Likes")plt.bar(    x,    top_videos["Comments"],    bottom=top_videos["Likes"],    label="Comments")plt.title("Likes and Comments Comparison")plt.xlabel("Videos")plt.ylabel("Count")plt.xticks(    x,    [f"Video {i+1}" for i in x],    rotation=45)plt.legend()plt.tight_layout()plt.show()
+```
+
+### **Cell 11 – Analyse monthly uploads**
+
+This helps us understand how frequently the channel uploads videos.
+
+```
+df["Month"] = df["Published Date"].dt.to_period("M")monthly_uploads = df.groupby("Month").size()plt.figure(figsize=(14, 6))monthly_uploads.plot(kind="bar")plt.title("Monthly YouTube Video Uploads")plt.xlabel("Month")plt.ylabel("Number of Videos")plt.xticks(rotation=45)plt.tight_layout()plt.show()print(monthly_uploads)
+```
+
+### **Cell 12 – Engagement rate analysis**
+
+Engagement rate helps us understand how much interaction videos receive compared to their views.
+
+Formula:
+
+\\[ \text{Engagement Rate} = \frac{\text{Likes + Comments}}{\text{Views}}\times100 \\]
+
+```
+plt.figure(figsize=(12, 6))sns.barplot(    data=df.head(15),    x="Engagement Rate",    y="Title")plt.title("Engagement Rate of Top 15 Videos")plt.xlabel("Engagement Rate (%)")plt.ylabel("Video Title")plt.tight_layout()plt.show()
+```
+
+### **Cell 13 – Views distribution**
+
+This graph helps us understand the distribution of views across videos.
+
+```
+plt.figure(figsize=(10, 6))plt.hist(    df["Views"],    bins=20,    edgecolor="black")plt.title("Distribution of YouTube Video Views")plt.xlabel("Number of Views")plt.ylabel("Number of Videos")plt.tight_layout()plt.show()
+```
+
+### **Cell 14 – Download the analysed data as CSV**
+
+This allows you to save your dataset on your computer.
+
+```
+from google.colab import filesdf.to_csv(    "youtube_channel_analysis.csv",    index=False)files.download("youtube_channel_analysis.csv")print("CSV file downloaded successfully!")
+```
+
+## **6. Expected output**
+
+After running all the cells, you should get results similar to these (illustrative values):
+
+**YouTube Channel Analysis Dashboard**
+
+ILLUSTRATIVE OUTPUT — NOT LIVE CHANNEL DATA
+
+# **10M**
+
+Subscribers
+
+# **500M**
+
+Total channel views
+
+# **200**
+
+Videos analysed
+
+# **4.5%**
+
+Average engagement
+
+**Top videos by views**
+
+Illustrative example of video views.
+
+0M7M14M21M28MVideo 1Video 2Video 3Video 4Video 5
+
+**Monthly uploads**
+
+Illustrative monthly upload count.
+
+3691215JanFebMarAprMayJun
+
+## **7. Important points to understand**
+
+| Term            | Meaning                                    |
+| --------------- | ------------------------------------------ |
+| API Key         | Authenticates your request to YouTube      |
+| Channel ID      | Unique identification of a YouTube channel |
+| DataFrame       | Tabular structure used to store data       |
+| Views           | Number of video views                      |
+| Likes           | Number of likes                            |
+| Comments        | Number of comments                         |
+| Engagement Rate | Interaction compared with video views      |
+| Visualization   | Graphical representation of data           |
+
+## **8. Important limitations**
+
+1. The program analyses up to 200 videos by default. Change `MAX_VIDEOS = 200` to increase the limit.
+2. YouTube may hide subscriber counts.
+3. If likes or comments are disabled or unavailable, their values may be missing and the code treats them as zero.
+4. This program analyses publicly accessible information, not private YouTube Analytics data.
+5. API requests have quota limits. The standard allocation is generally 10,000 units per day for most API methods, subject to Google's current quota rules.&#x20;
+
+   [image](https://www.google.com/s2/favicons?domain=https://developers.google.com\&sz=32)
+
+   Google for Developers+2
+
+
+
+**One URL clarification:** The provided code accepts `@handle` URLs and direct `UC...` channel IDs. If your URL is in the `/channel/UC...` format, enter just the `UC...` ID in Cell 3.
+
+For reference, YouTube's official documentation:
+
+- [YouTube Data API documentation](https://developers.google.com/youtube/data/getting-started?hl=en\&utm_source=chatgpt.com)
+- [Retrieving a channel's uploaded videos](https://developers.google.com/youtube/data/guides/implementation/videos?hl=en\&utm_source=chatgpt.com)
+- [YouTube video statistics API](https://developers.google.com/youtube/data/reference/rest/v3/videos/list?utm_source=chatgpt.com)
+
+## **9. How to execute the complete project**
+
+Follow this order:
+
+1. Generate your API key in Google Cloud Console.
+2. Open Google Colab and create a new notebook.
+3. Run Cell 1 to install libraries.
+4. Paste your API key in Cell 2.
+5. Paste your YouTube channel URL in Cell 3.
+6. Run Cells 4–7 to collect and prepare data.
+7. Run Cells 8–13 to perform analysis and generate graphs.
+8. Run Cell 14 to download the CSV file.
+
+**My recommendation:** First test the project with a smaller channel or a channel with a manageable number of uploads. Set `MAX_VIDEOS = 50` for your first run.
+
+You will have a complete beginner-level YouTube Channel Data Analysis project using Python, Google Colab, YouTube API, Pandas and Matplotlib.
